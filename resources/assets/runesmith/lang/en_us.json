@@ -21,5 +21,7 @@
   "com.minecolonies.coremod.setting.runesmith:onlyunenchanted": "Only unenchanted gear:",
   "com.minecolonies.coremod.setting.tooltip.runesmith:onlyunenchanted": "Gear that already carries any enchantment is left alone.",
   "com.minecolonies.coremod.setting.runesmith:lapis": "Lapis lazuli per book level:",
-  "com.minecolonies.coremod.setting.tooltip.runesmith:lapis": "Each book also costs lapis lazuli, one per level of the book: a level I book one, a level V book five."
+  "com.minecolonies.coremod.setting.tooltip.runesmith:lapis": "Each book also costs lapis lazuli, one per level of the book: a level I book one, a level V book five.",
+  "com.minecolonies.coremod.setting.runesmith:colonists": "Visit colonists:",
+  "com.minecolonies.coremod.setting.tooltip.runesmith:colonists": "The Runesmith also walks to colonists, guards first, and enchants the armor they wear and the tool or weapon they hold. A worker's tool is left alone when the enchantment would make it too good for his hut."
 }

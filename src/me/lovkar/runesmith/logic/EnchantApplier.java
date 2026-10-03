@@ -43,7 +43,9 @@ public final class EnchantApplier {
         ABOVE_LEVEL_CAP,
         NOT_SUPPORTED,
         CONFLICT,
-        NO_CHANGE
+        NO_CHANGE,
+        /** Never returned here: the colony-side check that a worker would put the enchanted tool down. */
+        ABOVE_WORKER_LEVEL
     }
 
     /**

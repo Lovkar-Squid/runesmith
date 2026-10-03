@@ -27,7 +27,8 @@ public final class RunesmithModules {
                             .with(RunesmithSettings.TOOLS, new BoolSetting(true))
                             .with(RunesmithSettings.LEVEL_CAP, new BoolSetting(true))
                             .with(RunesmithSettings.ONLY_UNENCHANTED, new BoolSetting(false))
-                            .with(RunesmithSettings.LAPIS, new BoolSetting(true)),
+                            .with(RunesmithSettings.LAPIS, new BoolSetting(true))
+                            .with(RunesmithSettings.COLONISTS, new BoolSetting(true)),
                     () -> SettingsModuleView::new);
 
     private RunesmithModules() {

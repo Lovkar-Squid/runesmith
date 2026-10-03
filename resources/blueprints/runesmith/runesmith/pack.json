@@ -1,0 +1,16 @@
+{
+  "icon": "runesmith.png",
+  "name": "Runesmith",
+  "authors": [
+    "Lovkar",
+    "Claude"
+  ],
+  "desc": "Buildings for the Runesmith, who applies the Enchanter's books to the colony's gear.",
+  "mods": [
+    "structurize",
+    "minecolonies",
+    "runesmith"
+  ],
+  "version": "1",
+  "pack-format": "1"
+}

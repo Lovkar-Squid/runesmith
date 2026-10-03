@@ -75,6 +75,11 @@ public class BuildingRunesmith extends AbstractBuilding {
         return stack != null && (isGear(stack) || isBook(stack)) || super.isItemStackInRequest(stack);
     }
 
+    /** Whether the Runesmith may visit colonists (setting, default on). */
+    public boolean colonistsAllowed() {
+        return getSetting(RunesmithSettings.COLONISTS).getValue();
+    }
+
     /** The settings as a policy for {@code EnchantApplier}, read now. */
     public RunesmithPolicy policy() {
         final boolean cap = getSetting(RunesmithSettings.LEVEL_CAP).getValue();

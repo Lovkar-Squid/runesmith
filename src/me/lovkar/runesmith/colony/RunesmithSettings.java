@@ -22,6 +22,8 @@ public final class RunesmithSettings {
     public static final ISettingKey<BoolSetting> ONLY_UNENCHANTED = key("onlyunenchanted");
     /** Each book also costs lapis lazuli, one per level of the book (default on). */
     public static final ISettingKey<BoolSetting> LAPIS = key("lapis");
+    /** The Runesmith also visits colonists and enchants the armor they wear and the tool they hold (default on). */
+    public static final ISettingKey<BoolSetting> COLONISTS = key("colonists");
 
     private RunesmithSettings() {
     }

@@ -1,13 +1,17 @@
 package me.lovkar.runesmith.ai;
 
+import com.minecolonies.api.colony.ICitizenData;
 import com.minecolonies.api.entity.ai.statemachine.AITarget;
 import com.minecolonies.api.entity.ai.statemachine.states.AIWorkerState;
 import com.minecolonies.api.entity.ai.statemachine.states.IAIState;
+import com.minecolonies.api.entity.citizen.AbstractEntityCitizen;
 import com.minecolonies.api.util.InventoryUtils;
 import com.minecolonies.core.entity.ai.workers.AbstractEntityAIInteract;
 import me.lovkar.runesmith.Runesmith;
 import me.lovkar.runesmith.colony.BuildingRunesmith;
 import me.lovkar.runesmith.colony.JobRunesmith;
+import me.lovkar.runesmith.compat.Citizens;
+import me.lovkar.runesmith.compat.Equipment;
 import me.lovkar.runesmith.compat.Requests;
 import me.lovkar.runesmith.logic.EnchantApplier;
 import me.lovkar.runesmith.logic.RunesmithPolicy;
@@ -19,36 +23,49 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.enchantment.EnchantmentHelper;
 import net.minecraft.world.item.enchantment.ItemEnchantments;
+import net.minecraft.world.phys.Vec3;
 import net.neoforged.neoforge.items.IItemHandler;
 import net.neoforged.neoforge.items.IItemHandlerModifiable;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.Predicate;
 
 /**
- * The Runesmith at work: pick a piece of gear in the racks and a book the anvil rules accept for
- * it, walk to the anvil, work a few seconds, then in one step on the server thread take the book
- * (and the lapis), put the enchanted piece back where the old one lay, read it back and log it.
+ * The Runesmith at work. Two sources of gear, in this order:
+ * <ol>
+ * <li>the hut's racks: pick a piece and a book the anvil rules accept for it, walk to the anvil,
+ *     work a few seconds, then put the enchanted piece back into the rack slot it came from;</li>
+ * <li>the colonists (setting, default on): guards first, then the nearest; walk to one, face
+ *     them, channel three seconds, then enchant the armor they wear or the tool they hold.</li>
+ * </ol>
  *
- * <p>Nothing is ever taken before the result is known and checked again; if anything moved while
- * the worker was busy, the work is simply dropped and chosen anew. A pair the rules reject is
- * reported once and not reported again until the inventory changes.</p>
+ * <p>Every change happens in one step on the server thread, after everything has been checked
+ * again: the book (and the lapis) are taken first, the enchanted piece goes where the old one was
+ * through the container's own setter, and it is read back before the line is logged. If anything
+ * moved while the worker was busy, or the colonist walked away, nothing is taken and the work is
+ * chosen anew. A pair the rules reject in the racks is reported once, and again only after the
+ * hut's or the pack's contents change.</p>
  */
 public class EntityAIWorkRunesmith extends AbstractEntityAIInteract<JobRunesmith, BuildingRunesmith> {
 
     /** The Runesmith's own states. */
     public enum State implements IAIState {
         WALK_TO_WORK,
-        ENCHANTING;
+        ENCHANTING,
+        WALK_TO_CITIZEN,
+        CHANNEL;
 
         @Override
         public boolean isOkayToEat() {
@@ -65,6 +82,12 @@ public class EntityAIWorkRunesmith extends AbstractEntityAIInteract<JobRunesmith
     private static final int BOOK_STOCK_LIMIT = 8;
     private static final int LAPIS_PER_REQUEST = 16;
     private static final double XP_PER_BOOK = 2.0;
+    /** A visit: calls of the walk (one every 10 ticks) before the colonist counts as out of reach. */
+    private static final int MAX_VISIT_CALLS = 90;
+    /** A visit: the channel, in work calls (60 ticks). */
+    private static final int CHANNEL_CALLS = 12;
+    /** A visit: how close the Runesmith must stand, in blocks. */
+    private static final double REACH = 4.0;
 
     /** Where a stack lies: the hut's racks, or the worker's own pack. */
     private record Slot(boolean rack, int index) {
@@ -73,13 +96,21 @@ public class EntityAIWorkRunesmith extends AbstractEntityAIInteract<JobRunesmith
         }
     }
 
+    /** A piece a colonist wears or holds, as it was when the work was chosen. */
+    private record Worn(ICitizenData citizen, Citizens.Place place, ItemStack piece) {}
+
     private @Nullable Slot gearSlot;
     private @Nullable Slot bookSlot;
     private ItemStack gearExpected = ItemStack.EMPTY;
     private ItemStack bookExpected = ItemStack.EMPTY;
     private int progress;
+    private int visitCitizen = -1;
+    private Citizens.Place visitPlace = Citizens.Place.HAND;
+    private int visitCalls;
     private final Set<String> reported = new HashSet<>();
     private int reportedFor;
+    /** citizen id and place -> {day of the last visit, hash of the piece then}. */
+    private final Map<String, long[]> visited = new HashMap<>();
 
     public EntityAIWorkRunesmith(@NotNull final JobRunesmith job) {
         super(job);
@@ -87,7 +118,9 @@ public class EntityAIWorkRunesmith extends AbstractEntityAIInteract<JobRunesmith
                 new AITarget<IAIState>(AIWorkerState.IDLE, () -> AIWorkerState.START_WORKING, DECIDE_RATE),
                 new AITarget<IAIState>(AIWorkerState.START_WORKING, this::decide, DECIDE_RATE),
                 new AITarget<IAIState>(State.WALK_TO_WORK, this::walkToWork, DECIDE_RATE / 2),
-                new AITarget<IAIState>(State.ENCHANTING, this::enchant, WORK_RATE));
+                new AITarget<IAIState>(State.ENCHANTING, this::enchant, WORK_RATE),
+                new AITarget<IAIState>(State.WALK_TO_CITIZEN, this::walkToCitizen, DECIDE_RATE / 2),
+                new AITarget<IAIState>(State.CHANNEL, this::channel, WORK_RATE));
     }
 
     @Override
@@ -110,14 +143,16 @@ public class EntityAIWorkRunesmith extends AbstractEntityAIInteract<JobRunesmith
         forgetReportsIfChanged(racks, pack);
 
         final List<Slot> gear = find(racks, null, BuildingRunesmith::isGear);
-        if (gear.isEmpty()) {
+        final List<Worn> worn = building.colonistsAllowed() ? worn() : List.of();
+        if (gear.isEmpty() && worn.isEmpty()) {
             return idle();
         }
         final List<Slot> books = find(racks, pack, BuildingRunesmith::isBook);
         final int lapisHeld = count(racks, pack, BuildingRunesmith::isLapis);
         final RunesmithPolicy policy = building.policy();
-
         int lapisShort = 0;
+
+        // 1. the racks: what somebody brought to the hut comes first
         for (final Slot g : gear) {
             final ItemStack gearStack = stack(g, racks, pack);
             for (final Slot b : books) {
@@ -138,6 +173,33 @@ public class EntityAIWorkRunesmith extends AbstractEntityAIInteract<JobRunesmith
                 return State.WALK_TO_WORK;
             }
         }
+        // 2. the colonists: guards first, then the nearest (rejections here are not logged:
+        //    every colonist's every piece against every book would flood the log)
+        for (final Worn w : worn) {
+            for (final Slot b : books) {
+                final ItemStack bookStack = stack(b, racks, pack);
+                final EnchantApplier.Result result = EnchantApplier.apply(w.piece(), bookStack, policy);
+                if (!result.ok()) {
+                    continue;
+                }
+                if (result.lapis() > lapisHeld) {
+                    lapisShort = Math.max(lapisShort, result.lapis());
+                    continue;
+                }
+                if (w.place() == Citizens.Place.HAND && Equipment.wouldOutgrowWorkplace(w.citizen(), w.piece(), result.gear())) {
+                    report(w.piece(), bookStack, EnchantApplier.Reason.ABOVE_WORKER_LEVEL);
+                    continue;
+                }
+                bookSlot = b;
+                bookExpected = bookStack.copy();
+                gearExpected = w.piece().copy();
+                visitCitizen = w.citizen().getId();
+                visitPlace = w.place();
+                visitCalls = 0;
+                return State.WALK_TO_CITIZEN;
+            }
+        }
+        // 3. nothing to do now: ask for what is missing
         if (lapisShort > 0) {
             requestLapis(lapisShort);
         } else if (books.size() < BOOK_STOCK_LIMIT && !Requests.pending(building, worker.getCitizenData(), Items.ENCHANTED_BOOK)) {
@@ -145,6 +207,21 @@ public class EntityAIWorkRunesmith extends AbstractEntityAIInteract<JobRunesmith
             Runesmith.LOGGER.info("[Runesmith] requested {} enchanted book(s) hut={}", BOOKS_PER_REQUEST, building.getPosition().toShortString());
         }
         return idle();
+    }
+
+    /** What the colonists wear and hold that is gear, minus what was visited today and has not changed since. */
+    private List<Worn> worn() {
+        final List<Worn> out = new ArrayList<>();
+        final long day = day();
+        for (final ICitizenData c : Citizens.visitable(building.getColony(), worker.getCitizenData(), building.getPosition())) {
+            for (final Citizens.Place p : Citizens.Place.values()) {
+                final ItemStack piece = Citizens.piece(c, p);
+                if (BuildingRunesmith.isGear(piece) && !visitedToday(c, p, piece, day)) {
+                    out.add(new Worn(c, p, piece.copy()));
+                }
+            }
+        }
+        return out;
     }
 
     private void requestLapis(final int needed) {
@@ -161,7 +238,7 @@ public class EntityAIWorkRunesmith extends AbstractEntityAIInteract<JobRunesmith
         return AIWorkerState.IDLE;
     }
 
-    // ---------------------------------------------------------------- working
+    // ---------------------------------------------------------------- the racks
 
     private IAIState walkToWork() {
         if (gearSlot == null) {
@@ -191,65 +268,227 @@ public class EntityAIWorkRunesmith extends AbstractEntityAIInteract<JobRunesmith
             }
             return getState();
         }
-        applyNow();
+        applyInRack();
         clearPair();
         return AIWorkerState.START_WORKING;
     }
 
     /**
-     * The one step that changes anything. Everything is checked again first; the book and the lapis
-     * are taken before the gear is replaced, and given back if the replacement cannot happen.
+     * The one step that changes anything in the racks. Everything is checked again first; the book
+     * and the lapis are taken before the gear is replaced, and given back if it cannot be.
      */
-    private void applyNow() {
+    private void applyInRack() {
         final IItemHandler racks = racks();
         final IItemHandler pack = worker.getInventoryCitizen();
         if (racks == null || gearSlot == null || bookSlot == null) {
             return;
         }
-        final IItemHandler gearHandler = racks;
-        final IItemHandler bookHandler = bookSlot.rack() ? racks : pack;
-        final ItemStack gearNow = gearHandler.getStackInSlot(gearSlot.index());
-        final ItemStack bookNow = bookHandler.getStackInSlot(bookSlot.index());
-        if (!ItemStack.matches(gearNow, gearExpected) || !ItemStack.isSameItemSameComponents(bookNow, bookExpected) || bookNow.isEmpty()) {
+        final ItemStack gearNow = racks.getStackInSlot(gearSlot.index());
+        if (!ItemStack.matches(gearNow, gearExpected)) {
             return; // something moved while the worker was busy: choose again
         }
-        final EnchantApplier.Result result = EnchantApplier.apply(gearNow, bookNow, building.policy());
-        if (!result.ok()) {
-            report(gearNow, bookNow, result.reason());
-            return;
-        }
-        if (result.lapis() > count(racks, pack, BuildingRunesmith::isLapis)) {
+        final Taken taken = take(racks, pack, gearNow, null);
+        if (taken == null) {
             return;
         }
         final ItemStack gearBefore = gearNow.copy();
-        final ItemStack bookTaken = bookHandler.extractItem(bookSlot.index(), 1, false);
-        if (bookTaken.isEmpty()) {
-            return;
-        }
-        final List<ItemStack> lapisTaken = takeLapis(racks, pack, result.lapis());
-        if (lapisTaken == null) {
-            giveBack(bookHandler, bookSlot.index(), bookTaken, racks, pack);
-            return;
-        }
-        if (!replace(gearHandler, gearSlot.index(), result.gear())) {
-            giveBack(bookHandler, bookSlot.index(), bookTaken, racks, pack);
-            for (final ItemStack l : lapisTaken) {
-                giveBack(racks, -1, l, racks, pack);
-            }
+        if (!replace(racks, gearSlot.index(), taken.result.gear())) {
+            taken.giveBack(racks, pack);
             Runesmith.LOGGER.warn("[Runesmith] could not put the enchanted {} back into its rack slot; book and lapis returned hut={}",
                     name(gearBefore), building.getPosition().toShortString());
             return;
         }
-        final ItemStack readBack = gearHandler.getStackInSlot(gearSlot.index());
-        if (!ItemStack.matches(readBack, result.gear())) {
+        final ItemStack readBack = racks.getStackInSlot(gearSlot.index());
+        if (!ItemStack.matches(readBack, taken.result.gear())) {
             Runesmith.LOGGER.error("[Runesmith] read-back mismatch after enchanting {}: rack slot holds {} hut={}",
                     name(gearBefore), describe(readBack), building.getPosition().toShortString());
         }
+        done(taken, gearBefore, readBack, gearSlot.where());
+    }
+
+    // ---------------------------------------------------------------- the colonists
+
+    private @Nullable ICitizenData visited() {
+        return visitCitizen < 0 ? null : Citizens.byId(building.getColony(), visitCitizen);
+    }
+
+    private static @Nullable AbstractEntityCitizen alive(@Nullable final ICitizenData c) {
+        return c == null ? null : c.getEntity().filter(LivingEntity::isAlive).orElse(null);
+    }
+
+    private IAIState walkToCitizen() {
+        final ICitizenData c = visited();
+        final AbstractEntityCitizen e = alive(c);
+        if (e == null || bookSlot == null) {
+            endVisit(c);
+            return AIWorkerState.START_WORKING;
+        }
+        if (++visitCalls > MAX_VISIT_CALLS) {
+            endVisit(c);
+            return AIWorkerState.START_WORKING;
+        }
+        if (worker.distanceTo(e) <= REACH || walkToSafePos(e.blockPosition())) {
+            progress = 0;
+            world.playSound(null, worker.blockPosition(), SoundEvents.ENCHANTMENT_TABLE_USE, SoundSource.NEUTRAL, 0.6F, 1.2F);
+            return State.CHANNEL;
+        }
+        return getState();
+    }
+
+    private IAIState channel() {
+        final ICitizenData c = visited();
+        final AbstractEntityCitizen e = alive(c);
+        if (e == null || bookSlot == null) {
+            endVisit(c);
+            return AIWorkerState.START_WORKING;
+        }
+        if (worker.distanceTo(e) > REACH + 2.0) {
+            return State.WALK_TO_CITIZEN; // they walked off: follow (the walk keeps counting its calls)
+        }
+        worker.getLookControl().setLookAt(e, 30.0F, 30.0F);
+        if (++progress < CHANNEL_CALLS) {
+            worker.swing(progress % 2 == 0 ? InteractionHand.MAIN_HAND : InteractionHand.OFF_HAND);
+            if (world instanceof ServerLevel level) {
+                final Vec3 from = worker.position().add(0, 1.4, 0);
+                final Vec3 to = e.position().add(0, 1.0, 0);
+                for (int i = 1; i <= 4; i++) {
+                    final Vec3 at = from.lerp(to, i / 5.0);
+                    level.sendParticles(ParticleTypes.ENCHANT, at.x, at.y, at.z, 2, 0.1, 0.1, 0.1, 0.2);
+                }
+            }
+            return getState();
+        }
+        applyToCitizen(c);
+        endVisit(c);
+        return AIWorkerState.START_WORKING;
+    }
+
+    /** The one step that changes a colonist's piece, checked again first, read back from inventory and entity. */
+    private void applyToCitizen(final ICitizenData c) {
+        final IItemHandler racks = racks();
+        final IItemHandler pack = worker.getInventoryCitizen();
+        if (racks == null) {
+            return;
+        }
+        final ItemStack pieceNow = Citizens.piece(c, visitPlace).copy();
+        // the same piece, worn a little more since is still the same piece
+        if (!sameButWear(pieceNow, gearExpected) || !Citizens.shows(c, visitPlace, pieceNow)) {
+            return;
+        }
+        final Taken taken = take(racks, pack, pieceNow, c);
+        if (taken == null) {
+            return;
+        }
+        if (!Citizens.replace(c, visitPlace, pieceNow, taken.result.gear())) {
+            if (Citizens.shows(c, visitPlace, pieceNow)) {
+                taken.giveBack(racks, pack);
+                Runesmith.LOGGER.warn("[Runesmith] could not give {} the enchanted {}; book and lapis returned hut={}",
+                        c.getName(), name(pieceNow), building.getPosition().toShortString());
+                return;
+            }
+            Runesmith.LOGGER.error("[Runesmith] read-back mismatch after enchanting {}'s {}: inventory {} entity {} hut={}", c.getName(),
+                    name(pieceNow), describe(Citizens.piece(c, visitPlace)),
+                    c.getEntity().map(e -> describe(e.getItemBySlot(visitPlace.slot))).orElse("gone"), building.getPosition().toShortString());
+        }
+        done(taken, pieceNow, Citizens.piece(c, visitPlace), "citizen " + c.getName());
+    }
+
+    private void endVisit(@Nullable final ICitizenData c) {
+        if (c != null) {
+            visited.put(c.getId() + ":" + visitPlace, new long[] {day(), pieceHash(Citizens.piece(c, visitPlace))});
+        }
+        clearPair();
+    }
+
+    private boolean visitedToday(final ICitizenData c, final Citizens.Place p, final ItemStack piece, final long day) {
+        final long[] last = visited.get(c.getId() + ":" + p);
+        return last != null && last[0] == day && last[1] == pieceHash(piece);
+    }
+
+    /** The piece's identity for the daily visit: its item and its enchantments (not its wear). */
+    private static long pieceHash(final ItemStack s) {
+        return 31L * BuiltInRegistries.ITEM.getKey(s.getItem()).hashCode() + EnchantmentHelper.getEnchantmentsForCrafting(s).hashCode();
+    }
+
+    private static boolean sameButWear(final ItemStack a, final ItemStack b) {
+        return a.is(b.getItem()) && a.getCount() == b.getCount()
+                && EnchantApplier.sameEnchantments(EnchantmentHelper.getEnchantmentsForCrafting(a), EnchantmentHelper.getEnchantmentsForCrafting(b));
+    }
+
+    private long day() {
+        return world.getDayTime() / 24000L;
+    }
+
+    // ---------------------------------------------------------------- taking and giving
+
+    /** The book and the lapis, taken out, and the result they buy; {@link #giveBack} returns them. */
+    private final class Taken {
+        final EnchantApplier.Result result;
+        final ItemStack book;
+        final IItemHandler bookHandler;
+        final int bookIndex;
+        final List<ItemStack> lapis;
+
+        Taken(final EnchantApplier.Result result, final ItemStack book, final IItemHandler bookHandler, final int bookIndex,
+                final List<ItemStack> lapis) {
+            this.result = result;
+            this.book = book;
+            this.bookHandler = bookHandler;
+            this.bookIndex = bookIndex;
+            this.lapis = lapis;
+        }
+
+        void giveBack(final IItemHandler racks, final IItemHandler pack) {
+            EntityAIWorkRunesmith.giveBack(bookHandler, bookIndex, book, racks, pack);
+            for (final ItemStack l : lapis) {
+                EntityAIWorkRunesmith.giveBack(racks, -1, l, racks, pack);
+            }
+        }
+    }
+
+    /**
+     * Checks the book and the price again for this piece and takes them; null (and nothing taken)
+     * if anything no longer holds. A colonist's tool is also checked against his workplace.
+     */
+    private @Nullable Taken take(final IItemHandler racks, final IItemHandler pack, final ItemStack piece, @Nullable final ICitizenData colonist) {
+        if (bookSlot == null) {
+            return null;
+        }
+        final IItemHandler bookHandler = bookSlot.rack() ? racks : pack;
+        final ItemStack bookNow = bookHandler.getStackInSlot(bookSlot.index());
+        if (bookNow.isEmpty() || !ItemStack.isSameItemSameComponents(bookNow, bookExpected)) {
+            return null;
+        }
+        final EnchantApplier.Result result = EnchantApplier.apply(piece, bookNow, building.policy());
+        if (!result.ok()) {
+            report(piece, bookNow, result.reason());
+            return null;
+        }
+        if (colonist != null && visitPlace == Citizens.Place.HAND && Equipment.wouldOutgrowWorkplace(colonist, piece, result.gear())) {
+            report(piece, bookNow, EnchantApplier.Reason.ABOVE_WORKER_LEVEL);
+            return null;
+        }
+        if (result.lapis() > count(racks, pack, BuildingRunesmith::isLapis)) {
+            return null;
+        }
+        final ItemStack book = bookHandler.extractItem(bookSlot.index(), 1, false);
+        if (book.isEmpty()) {
+            return null;
+        }
+        final List<ItemStack> lapis = takeLapis(racks, pack, result.lapis());
+        if (lapis == null) {
+            giveBack(bookHandler, bookSlot.index(), book, racks, pack);
+            return null;
+        }
+        return new Taken(result, book, bookHandler, bookSlot.index(), lapis);
+    }
+
+    private void done(final Taken taken, final ItemStack before, final ItemStack after, final String where) {
         world.playSound(null, worker.blockPosition(), SoundEvents.ANVIL_USE, SoundSource.NEUTRAL, 0.5F, 1.2F);
         Runesmith.LOGGER.info("[Runesmith] applied {} via {}{} to {} -> {} ({}) hut={} worker={}",
-                EnchantApplier.describe(EnchantmentHelper.getEnchantmentsForCrafting(bookTaken)), describe(bookTaken),
-                result.lapis() > 0 ? " + " + result.lapis() + " lapis" : "", describe(gearBefore), describe(readBack),
-                gearSlot.where(), building.getPosition().toShortString(), worker.getCitizenData().getName());
+                EnchantApplier.describe(EnchantmentHelper.getEnchantmentsForCrafting(taken.book)), describe(taken.book),
+                taken.result.lapis() > 0 ? " + " + taken.result.lapis() + " lapis" : "", describe(before), describe(after),
+                where, building.getPosition().toShortString(), worker.getCitizenData().getName());
         incrementActionsDoneAndDecSaturation();
         worker.getCitizenExperienceHandler().addExperience(XP_PER_BOOK);
     }
@@ -344,6 +583,8 @@ public class EntityAIWorkRunesmith extends AbstractEntityAIInteract<JobRunesmith
         gearExpected = ItemStack.EMPTY;
         bookExpected = ItemStack.EMPTY;
         progress = 0;
+        visitCitizen = -1;
+        visitCalls = 0;
     }
 
     // ---------------------------------------------------------------- reporting
