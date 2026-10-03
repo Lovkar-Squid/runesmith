@@ -21,6 +21,17 @@ Made by **Lovkar & Claude** for NeoForge 1.21.1 and MineColonies.
 4. When the anvil would accept a book for a piece, the Runesmith applies it. The enchanted piece
    stays in the same rack slot until you take it.
 
+## Where the gear comes from
+
+1. **The hut's racks.** What you bring to the hut always comes first.
+2. **The colonists** (on by default). The Runesmith walks over to colonists, guards first, then
+   the nearest, and enchants the armor they wear and the weapon or tool in their hand where they
+   stand. He looks at each piece at most once a day, unless it changes. A worker's tool is left
+   alone when the enchantment would make it too good for the worker's hut, so that the worker
+   never has to put it down.
+3. **The warehouse** (off by default). The Runesmith borrows one piece at a time from a warehouse
+   rack, enchants it at his anvil and puts it back where it was.
+
 ## Rules
 
 - A book goes only on gear the vanilla anvil would accept it for. The item type must be right, and
@@ -47,6 +58,8 @@ Made by **Lovkar & Claude** for NeoForge 1.21.1 and MineColonies.
 | Book level limited by building level | on | A level N Runesmith uses only books of level N or lower. Stronger books stay in stock until the building grows. Two level II books can still make level III. |
 | Only unenchanted gear | off | Gear that already carries any enchantment is left alone. |
 | Lapis lazuli per book level | on | Each book also costs lapis lazuli, one per level. |
+| Visit colonists | on | The Runesmith also enchants what colonists wear and hold, guards first. |
+| Borrow from the warehouse | off | The Runesmith also borrows gear from the warehouse racks, one piece at a time, and puts it back enchanted. |
 
 Keep the books you want to save in your own chests, not in the warehouse: the Runesmith may use
 any enchanted book the colony has.

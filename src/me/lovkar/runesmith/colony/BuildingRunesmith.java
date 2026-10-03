@@ -1,5 +1,6 @@
 package me.lovkar.runesmith.colony;
 
+import com.minecolonies.api.colony.ICitizenData;
 import com.minecolonies.api.colony.IColony;
 import com.minecolonies.api.colony.jobs.registry.JobEntry;
 import com.minecolonies.api.crafting.ItemStorage;
@@ -67,12 +68,30 @@ public class BuildingRunesmith extends AbstractBuilding {
         if (!inventory && (isGear(stack) || isBook(stack))) {
             return 0;
         }
+        if (inventory && onLoan(stack)) {
+            return 0; // a warehouse piece on loan stays in the pack until it goes back
+        }
         return super.buildingRequiresCertainAmountOfItem(stack, localAlreadyKept, inventory, jobEntry);
     }
 
     @Override
     public boolean isItemStackInRequest(@Nullable final ItemStack stack) {
         return stack != null && (isGear(stack) || isBook(stack)) || super.isItemStackInRequest(stack);
+    }
+
+    /** Whether a piece like this is out on loan from a warehouse with one of this hut's workers. */
+    public boolean onLoan(final ItemStack stack) {
+        for (final ICitizenData c : getAllAssignedCitizen()) {
+            if (c.getJob() instanceof JobRunesmith job && job.onLoan(stack)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Whether the Runesmith may borrow gear from the warehouses (setting, default off). */
+    public boolean warehouseAllowed() {
+        return getSetting(RunesmithSettings.WAREHOUSE).getValue();
     }
 
     /** Whether the Runesmith may visit colonists (setting, default on). */

@@ -70,7 +70,11 @@ while (-not $proc.HasExited -and (Get-Date) -lt $stopBy) { Start-Sleep -Seconds 
 if (-not $proc.HasExited) { & taskkill /PID $proc.Id /T /F | Out-Null }
 
 $lines = @()
-if (Test-Path $log) { $lines = Get-Content $log }
+if (Test-Path $log) {
+  $lines = Get-Content $log
+  # keep each scenario's log: the next run starts a fresh latest.log
+  Copy-Item $log (Join-Path $rig ("logs\scenario-{0}{1}.log" -f $Name, $(if ($KeepWorld) { '-keep' } else { '' }))) -Force
+}
 $ours = $lines | Where-Object { $_ -match '\[runesmithtest\]' }
 $errors = $lines | Where-Object { ($_ -match 'ERROR|Exception') -and ($_ -match '(?i)runesmith|minecolonies') }
 '---- harness'

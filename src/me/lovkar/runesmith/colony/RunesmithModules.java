@@ -28,7 +28,9 @@ public final class RunesmithModules {
                             .with(RunesmithSettings.LEVEL_CAP, new BoolSetting(true))
                             .with(RunesmithSettings.ONLY_UNENCHANTED, new BoolSetting(false))
                             .with(RunesmithSettings.LAPIS, new BoolSetting(true))
-                            .with(RunesmithSettings.COLONISTS, new BoolSetting(true)),
+                            .with(RunesmithSettings.COLONISTS, new BoolSetting(true))
+                            // off by default: the warehouse holds what the player is keeping
+                            .with(RunesmithSettings.WAREHOUSE, new BoolSetting(false)),
                     () -> SettingsModuleView::new);
 
     private RunesmithModules() {

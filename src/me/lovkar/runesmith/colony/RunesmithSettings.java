@@ -24,6 +24,8 @@ public final class RunesmithSettings {
     public static final ISettingKey<BoolSetting> LAPIS = key("lapis");
     /** The Runesmith also visits colonists and enchants the armor they wear and the tool they hold (default on). */
     public static final ISettingKey<BoolSetting> COLONISTS = key("colonists");
+    /** The Runesmith also borrows gear from the colony's warehouses, one piece at a time (default off). */
+    public static final ISettingKey<BoolSetting> WAREHOUSE = key("warehouse");
 
     private RunesmithSettings() {
     }

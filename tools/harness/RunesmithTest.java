@@ -133,6 +133,11 @@ public final class RunesmithTest {
             case "j3" -> scenarioJ3();
             case "j4" -> scenarioJ4();
             case "j5" -> scenarioJ5();
+            case "h" -> scenarioH();
+            case "i" -> scenarioI();
+            case "l" -> scenarioL();
+            case "w" -> scenarioW();
+            case "k" -> scenarioK();
             default -> steps.add(new Step("unknown scenario '" + scenario + "'", 1, l -> {
                 check("scenario known", false, scenario);
                 return true;
@@ -615,22 +620,52 @@ public final class RunesmithTest {
         }));
     }
 
-    /** J2: a colonist holding a pickaxe, an Efficiency book: the pickaxe in his hand is enchanted. */
+    /** A level 1 guard tower and its guard (a knight). */
+    private void guard() {
+        steps.add(new Step("paste a guard tower", 20, l -> paste(l, "Medieval Oak", "military/guardtower1.blueprint", otherPos())));
+        steps.add(new Step("guard tower pasted", 6000, l -> pasted(l, otherPos())));
+        steps.add(new Step("register the guard tower", 200, l -> (otherHut = register(l, otherPos(), "guard tower")) != null));
+        steps.add(new Step("hire a guard", 200, l -> {
+            visitee = hire(l, otherHut);
+            check("hired a guard", visitee.getJob() instanceof com.minecolonies.core.colony.jobs.AbstractJobGuard<?>,
+                    visitee.getName() + " -> " + (visitee.getJob() == null ? "none" : visitee.getJob().getClass().getSimpleName()));
+            return true;
+        }));
+    }
+
+    /**
+     * J2: a guard holding a stone sword, a Sharpness I book: the sword in his hand is enchanted.
+     * (A guard keeps his weapon in hand; a colonist with no job puts a tool away, to eat for one.)
+     */
     private void scenarioJ2() {
         runesmithColony(false);
-        unemployed("holds a pickaxe");
-        hold(l -> new ItemStack(Items.IRON_PICKAXE));
-        stockAndSnapshot("Efficiency II book, 16 lapis", l -> new ItemStack[] {
-                ColonyScenarios.book(l, Enchantments.EFFICIENCY, 2), new ItemStack(Items.LAPIS_LAZULI, 16)});
-        waitFor("the pickaxe gets Efficiency II", 12000, l -> ColonyScenarios.level(l, held(), Enchantments.EFFICIENCY) == 2);
+        guard();
+        hold(l -> new ItemStack(Items.STONE_SWORD));
+        stockAndSnapshot("Sharpness I book, 16 lapis", l -> new ItemStack[] {
+                ColonyScenarios.book(l, Enchantments.SHARPNESS, 1), new ItemStack(Items.LAPIS_LAZULI, 16)});
+        steps.add(new Step("the sword in his hand gets Sharpness I", 12000, l -> {
+            if (tick % 600 == 0) {
+                LOG.info(TAG + "waiting: Runesmith AI {} ({}), guard AI {} ({}), holds {}, entity hand {}", aiState(smith), who(smith),
+                        aiState(visitee), who(visitee), held(), visitee.getEntity().map(e -> String.valueOf(e.getMainHandItem())).orElse("-"));
+            }
+            if (tick % 20 == 0 && String.valueOf(aiState(smith)).matches("WALK_TO_CITIZEN|CHANNEL")) {
+                LOG.info(TAG + "nav: {}; guard AI {} at {}, entity hand {}", navInfo(smith), aiState(visitee),
+                        visitee.getEntity().map(e -> e.blockPosition().toShortString()).orElse("-"),
+                        visitee.getEntity().map(e -> String.valueOf(e.getMainHandItem())).orElse("-"));
+            }
+            return tick % 20 == 0 && ColonyScenarios.level(l, held(), Enchantments.SHARPNESS) == 1;
+        }));
         settle(200);
         steps.add(new Step("checks", 20, l -> {
             final List<String> applied = ColonyScenarios.modLines("applied ");
-            check("J2 pickaxe in hand has Efficiency II", held().is(Items.IRON_PICKAXE)
-                    && ColonyScenarios.level(l, held(), Enchantments.EFFICIENCY) == 2, "");
-            check("J2 inventory and entity agree", entityAgrees(net.minecraft.world.entity.EquipmentSlot.MAINHAND, held()), who(visitee));
+            check("J2 sword in hand has Sharpness I", held().is(Items.STONE_SWORD)
+                    && ColonyScenarios.level(l, held(), Enchantments.SHARPNESS) == 1, "");
+            // a guard shows his sword only while his AI has it equipped; what he must never show is the old, unenchanted copy
+            final ItemStack shown = visitee.getEntity().map(e -> e.getMainHandItem()).orElse(ItemStack.EMPTY);
+            check("J2 the entity shows no old copy", !(shown.is(Items.STONE_SWORD) && ColonyScenarios.level(l, shown, Enchantments.SHARPNESS) != 1),
+                    "entity hand " + shown + " " + shown.getComponents() + ", " + who(visitee));
             check("J2 one applied line, at the citizen", applied.size() == 1 && applied.get(0).contains("(citizen "), String.join(" | ", applied));
-            check("J2 2 lapis spent", lapis() == 14, "lapis " + lapis());
+            check("J2 1 lapis spent", lapis() == 15, "lapis " + lapis());
             invariant("J2");
             return true;
         }));
@@ -685,41 +720,364 @@ public final class RunesmithTest {
     }
 
     /**
-     * J5: a builder of a level 1 hut holds a stone pickaxe. Efficiency II would make it too good for
-     * his hut (stone 1 + 1 > 1): skipped ABOVE_WORKER_LEVEL. Efficiency I is fine and is applied.
+     * J5: a guard of a level 1 tower holds a stone sword. Sharpness II would make it too good for his
+     * tower (stone 1 + (2 - 1) > 1), so he would put it down: skipped ABOVE_WORKER_LEVEL, nothing spent.
      */
     private void scenarioJ5() {
         runesmithColony(false);
-        steps.add(new Step("paste a builder's hut", 20, l -> paste(l, "Medieval Oak", "fundamentals/builder1.blueprint", otherPos())));
-        steps.add(new Step("builder's hut pasted", 6000, l -> pasted(l, otherPos())));
-        steps.add(new Step("register the builder's hut", 200, l -> (otherHut = register(l, otherPos(), "builder")) != null));
-        steps.add(new Step("hire a builder", 200, l -> {
-            visitee = hire(l, otherHut);
-            return jobIs(visitee, "JobBuilder");
-        }));
-        hold(l -> new ItemStack(Items.STONE_PICKAXE));
-        stockAndSnapshot("Efficiency II book, Efficiency I book, 16 lapis", l -> new ItemStack[] {
-                ColonyScenarios.book(l, Enchantments.EFFICIENCY, 2), ColonyScenarios.book(l, Enchantments.EFFICIENCY, 1),
-                new ItemStack(Items.LAPIS_LAZULI, 16)});
-        waitFor("the stone pickaxe gets Efficiency I", 12000, l -> {
-            for (int i = 0; i < visitee.getInventory().getSlots(); i++) {
-                final ItemStack s = visitee.getInventory().getStackInSlot(i);
-                if (s.is(Items.STONE_PICKAXE) && ColonyScenarios.level(l, s, Enchantments.EFFICIENCY) == 1) {
-                    return true;
-                }
-            }
-            return false;
-        });
-        settle(300);
+        guard();
+        hold(l -> new ItemStack(Items.STONE_SWORD));
+        stockAndSnapshot("Sharpness II book, 16 lapis", l -> new ItemStack[] {
+                ColonyScenarios.book(l, Enchantments.SHARPNESS, 2), new ItemStack(Items.LAPIS_LAZULI, 16)});
+        settle(2400);
         steps.add(new Step("checks", 20, l -> {
             final List<String> skipped = ColonyScenarios.modLines("skipped ");
-            check("J5 Efficiency II skipped as too good for the hut", skipped.stream().anyMatch(x -> x.endsWith("ABOVE_WORKER_LEVEL")),
+            check("J5 Sharpness II skipped as too good for the tower", skipped.stream().anyMatch(x -> x.endsWith("ABOVE_WORKER_LEVEL")),
                     String.join(" | ", skipped));
-            check("J5 the Efficiency II book stays", ColonyScenarios.bookWithLevel(l, smithHut, smith, Enchantments.EFFICIENCY, 2) && books() == 1,
-                    "books " + books());
+            check("J5 nothing applied, the book stays", ColonyScenarios.modLines("applied ").isEmpty() && books() == 1, "books " + books());
+            check("J5 the sword is untouched", InventoryUtils.getItemCountInItemHandler(visitee.getInventory(), s -> s.is(Items.STONE_SWORD) && s.isEnchanted()) == 0, "");
             invariant("J5");
             return true;
         }));
+    }
+
+    // ---------------------------------------------------------------- Phase 3 scenarios
+
+    /** H: the level cap on, a level 1 hut: a III book is ABOVE_LEVEL_CAP; once the hut is level 3 it is applied. */
+    private void scenarioH() {
+        runesmithColony(true);
+        stockAndSnapshot("iron sword, Sharpness III book, 16 lapis", l -> new ItemStack[] {
+                new ItemStack(Items.IRON_SWORD), ColonyScenarios.book(l, Enchantments.SHARPNESS, 3), new ItemStack(Items.LAPIS_LAZULI, 16)});
+        settle(1200);
+        steps.add(new Step("checks at level 1, then the hut grows to level 3", 20, l -> {
+            final List<String> skipped = ColonyScenarios.modLines("skipped ");
+            check("H level 1: ABOVE_LEVEL_CAP once", skipped.stream().filter(x -> x.endsWith("ABOVE_LEVEL_CAP")).count() == 1, String.join(" | ", skipped));
+            check("H level 1: nothing applied, book kept", ColonyScenarios.modLines("applied ").isEmpty() && books() == 1, "books " + books());
+            smithHut.setBuildingLevel(3);
+            check("H the hut is level 3", smithHut.getBuildingLevel() == 3, "level " + smithHut.getBuildingLevel());
+            return true;
+        }));
+        waitFor("at level 3 the III book is applied", 6000, l -> anyWith(l, Items.IRON_SWORD, Enchantments.SHARPNESS, 3));
+        settle(200);
+        steps.add(new Step("checks at level 3", 20, l -> {
+            check("H level 3: one applied line", ColonyScenarios.modLines("applied ").size() == 1, "");
+            invariant("H");
+            return true;
+        }));
+    }
+
+    private static final Object[][] SETTINGS_CHANGED = {
+            {RunesmithSettings.ARMOR, false}, {RunesmithSettings.WEAPONS, false}, {RunesmithSettings.TOOLS, true},
+            {RunesmithSettings.LEVEL_CAP, false}, {RunesmithSettings.ONLY_UNENCHANTED, true}, {RunesmithSettings.LAPIS, false},
+            {RunesmithSettings.COLONISTS, false}, {RunesmithSettings.WAREHOUSE, true}};
+
+    /**
+     * I: two runs on one world. "i": every setting moved off its default, a saved world. "i reload":
+     * the building, its worker and every setting are as they were.
+     */
+    @SuppressWarnings("unchecked")
+    private void scenarioI() {
+        if (mode.contains("reload")) {
+            steps.add(new Step("the colony and the Runesmith come back", 2400, l -> {
+                if (tick % 20 != 0) {
+                    return false;
+                }
+                colony = IColonyManager.getInstance().getColonyByWorld(1, l);
+                if (colony == null) {
+                    return false;
+                }
+                for (final IBuilding b : colony.getServerBuildingManager().getBuildings().values()) {
+                    if (b instanceof BuildingRunesmith) {
+                        smithHut = b;
+                        return true;
+                    }
+                }
+                return false;
+            }));
+            steps.add(new Step("checks after the restart", 20, l -> {
+                for (final Object[] s : SETTINGS_CHANGED) {
+                    final boolean value = smithHut.getSetting((com.minecolonies.api.colony.buildings.modules.settings.ISettingKey<
+                            com.minecolonies.core.colony.buildings.modules.settings.BoolSetting>) s[0]).getValue();
+                    check("I setting " + ((com.minecolonies.api.colony.buildings.modules.settings.ISettingKey<?>) s[0]).getUniqueId() + " kept",
+                            value == (Boolean) s[1], "is " + value + ", was set to " + s[1]);
+                }
+                final WorkerBuildingModule work = smithHut.getFirstModuleOccurance(WorkerBuildingModule.class);
+                final List<ICitizenData> workers = work == null ? List.of() : work.getAssignedCitizen();
+                check("I the worker is still hired", workers.size() == 1 && workers.get(0).getJob() != null
+                        && workers.get(0).getJob().getClass().getSimpleName().equals("JobRunesmith"),
+                        workers.isEmpty() ? "nobody" : workers.get(0).getName() + " -> " + workers.get(0).getJob());
+                check("I the building kept its level", smithHut.getBuildingLevel() == 1, "level " + smithHut.getBuildingLevel());
+                return true;
+            }));
+            return;
+        }
+        runesmithColony(false);
+        steps.add(new Step("move every setting off its default", 20, l -> {
+            final StringBuilder sb = new StringBuilder();
+            for (final Object[] s : SETTINGS_CHANGED) {
+                final com.minecolonies.api.colony.buildings.modules.settings.ISettingKey<com.minecolonies.core.colony.buildings.modules.settings.BoolSetting> key =
+                        (com.minecolonies.api.colony.buildings.modules.settings.ISettingKey<com.minecolonies.core.colony.buildings.modules.settings.BoolSetting>) s[0];
+                ColonyScenarios.set(smithHut, key, (Boolean) s[1]);
+                sb.append(key.getUniqueId().getPath()).append('=').append(smithHut.getSetting(key).getValue()).append(' ');
+            }
+            smithHut.markDirty();
+            check("I settings changed", true, sb.toString().trim());
+            return true;
+        }));
+        settle(100);
+        steps.add(new Step("save-all flush", 40, l -> {
+            l.getServer().saveEverything(false, true, true);
+            check("I world saved", true, "");
+            return true;
+        }));
+    }
+
+    /** L: only unenchanted gear: of an enchanted and a plain sword only the plain one is enchanted. */
+    private void scenarioL() {
+        runesmithColony(false);
+        steps.add(new Step("only unenchanted gear on", 20, l -> {
+            ColonyScenarios.set(smithHut, RunesmithSettings.ONLY_UNENCHANTED, true);
+            return true;
+        }));
+        stockAndSnapshot("a sword with Unbreaking I, a plain sword, two Sharpness III books, 16 lapis", l -> new ItemStack[] {
+                ColonyScenarios.gear(l, Items.IRON_SWORD, Enchantments.UNBREAKING, 1), new ItemStack(Items.IRON_SWORD),
+                ColonyScenarios.book(l, Enchantments.SHARPNESS, 3), ColonyScenarios.book(l, Enchantments.SHARPNESS, 3),
+                new ItemStack(Items.LAPIS_LAZULI, 16)});
+        waitFor("the plain sword gets Sharpness III", 6000, l -> anyWith(l, Items.IRON_SWORD, Enchantments.SHARPNESS, 3));
+        settle(1000);
+        steps.add(new Step("checks", 20, l -> {
+            final List<ItemStack> swords = ColonyScenarios.all(smithHut, smith, Items.IRON_SWORD);
+            final long withUnbreakingOnly = swords.stream().filter(s -> ColonyScenarios.level(l, s, Enchantments.UNBREAKING) == 1
+                    && ColonyScenarios.level(l, s, Enchantments.SHARPNESS) == 0).count();
+            final long sharpOnly = swords.stream().filter(s -> ColonyScenarios.level(l, s, Enchantments.SHARPNESS) == 3
+                    && ColonyScenarios.level(l, s, Enchantments.UNBREAKING) == 0).count();
+            check("L the enchanted sword is left alone", withUnbreakingOnly == 1, "");
+            check("L the plain sword got Sharpness III", sharpOnly == 1, "");
+            check("L one book used, one kept", ColonyScenarios.modLines("applied ").size() == 1 && books() == 1, "books " + books());
+            check("L ALREADY_ENCHANTED reported", ColonyScenarios.modLines("skipped ").stream().anyMatch(x -> x.endsWith("ALREADY_ENCHANTED")), "");
+            invariant("L");
+            return true;
+        }));
+    }
+
+    /** W: the warehouse source: a sword is borrowed, enchanted at the anvil and put back into its own slot. */
+    private void scenarioW() {
+        runesmithColony(false);
+        steps.add(new Step("paste a warehouse", 20, l -> paste(l, "Medieval Oak", "craftsmanship/storage/warehouse1.blueprint", warehousePos())));
+        steps.add(new Step("warehouse pasted", 8000, l -> pasted(l, warehousePos())));
+        steps.add(new Step("register the warehouse", 200, l -> (warehouse = register(l, warehousePos(), "warehouse")) != null));
+        steps.add(new Step("DIAG the warehouse doors and floor", 20, l -> {
+            // offsets from the Medieval Oak warehouse1 hut block: east door, stair step, hall floor, the moat south of it
+            final int[][] at = {{7, 0, 0}, {7, 1, 0}, {-1, 0, 5}, {-1, 1, 5}, {8, -1, -1}, {8, -1, 0}, {8, -1, 1}, {6, -1, 0}, {6, 0, 0},
+                    {6, -1, -3}, {6, 0, -3}, {6, 1, -3}, {8, -1, -4}, {8, -2, -4}, {7, -1, -8}, {7, 0, -7}, {7, -1, -6}, {7, -2, -6}};
+            final StringBuilder sb = new StringBuilder();
+            for (final int[] o : at) {
+                final BlockPos p = warehousePos().offset(o[0], o[1], o[2]);
+                sb.append(p.toShortString()).append('=').append(l.getBlockState(p)).append("; ");
+            }
+            LOG.info(TAG + "DIAG warehouse blocks: {}", sb);
+            LOG.info(TAG + "DIAG warehouse racks: {}", warehouse.getContainers());
+            // the world as it stands after the paste and the fill, four layers around the warehouse
+            for (int y = -2; y <= 1; y++) {
+                final StringBuilder map = new StringBuilder();
+                for (int z = 20; z <= 46; z++) {
+                    map.append(String.format("%n%4d ", z));
+                    for (int x = -6; x <= 20; x++) {
+                        map.append(mapChar(l.getBlockState(warehousePos().offset(x, y, z - 30))));
+                    }
+                }
+                LOG.info(TAG + "DIAG map y={} (columns x -6..20):{}", y, map);
+            }
+            return true;
+        }));
+        steps.add(new Step("a plain sword in the warehouse, the warehouse source on", 20, l -> {
+            final boolean ok = ColonyScenarios.stock(warehouse, new ItemStack(Items.IRON_SWORD));
+            ColonyScenarios.set(smithHut, RunesmithSettings.WAREHOUSE, true);
+            check("warehouse stocked", ok, ColonyScenarios.count(warehouse, null, BuildingRunesmith::isGear) + " gear in the warehouse");
+            return true;
+        }));
+        stockAndSnapshot("Sharpness III book, 16 lapis in the Runesmith", l -> new ItemStack[] {
+                ColonyScenarios.book(l, Enchantments.SHARPNESS, 3), new ItemStack(Items.LAPIS_LAZULI, 16)});
+        steps.add(new Step("the sword is back in the warehouse with Sharpness III", 12000, l -> {
+            if (tick % 600 == 0) {
+                LOG.info(TAG + "waiting: Runesmith AI {} ({}), swords: warehouse {}, Runesmith {}", aiState(smith), who(smith),
+                        ColonyScenarios.count(warehouse, null, s -> s.is(Items.IRON_SWORD)), ColonyScenarios.count(smithHut, smith, s -> s.is(Items.IRON_SWORD)));
+            }
+            if (tick % 20 == 0 && String.valueOf(aiState(smith)).startsWith("LOAN_")) {
+                LOG.info(TAG + "nav: {}", navInfo(smith));
+            }
+            return tick % 20 == 0 && ColonyScenarios.all(warehouse, smith, Items.IRON_SWORD)
+                    .stream().anyMatch(s -> ColonyScenarios.level(l, s, Enchantments.SHARPNESS) == 3)
+                    && ColonyScenarios.count(warehouse, null, s -> s.is(Items.IRON_SWORD)) == 1;
+        }));
+        settle(300);
+        steps.add(new Step("checks", 20, l -> {
+            check("W borrowed and returned", ColonyScenarios.modLines("borrowed ").size() == 1 && ColonyScenarios.modLines("returned ").size() == 1,
+                    String.join(" | ", ColonyScenarios.modLines("borrowed ")) + " | " + String.join(" | ", ColonyScenarios.modLines("returned ")));
+            check("W one applied line, marked warehouse", ColonyScenarios.modLines("applied ").size() == 1
+                    && ColonyScenarios.modLines("applied ").get(0).contains("(warehouse)"), String.join(" | ", ColonyScenarios.modLines("applied ")));
+            check("W the sword is in the warehouse, not with the Runesmith", ColonyScenarios.count(warehouse, null, s -> s.is(Items.IRON_SWORD)) == 1
+                    && ColonyScenarios.count(smithHut, smith, s -> s.is(Items.IRON_SWORD)) == 0, "");
+            check("W no loan left open", smith.getJob() instanceof me.lovkar.runesmith.colony.JobRunesmith j && j.loans().isEmpty(), "");
+            invariant("W");
+            return true;
+        }));
+    }
+
+    /**
+     * K: fuzz. All three sources on, a level 5 hut, random gear and random books (curses
+     * included) in rounds, until at least 200 books have been applied. The invariant is checked over
+     * the whole run, across the racks, the pack, the warehouse and the colonists.
+     */
+    private void scenarioK() {
+        runesmithColony(false);
+        steps.add(new Step("paste a warehouse", 20, l -> paste(l, "Medieval Oak", "craftsmanship/storage/warehouse1.blueprint", warehousePos())));
+        steps.add(new Step("warehouse pasted", 8000, l -> pasted(l, warehousePos())));
+        steps.add(new Step("register the warehouse", 200, l -> (warehouse = register(l, warehousePos(), "warehouse")) != null));
+        steps.add(new Step("all sources on, a level 5 hut, three dressed colonists", 100, l -> {
+            ColonyScenarios.set(smithHut, RunesmithSettings.WAREHOUSE, true);
+            smithHut.setBuildingLevel(5);
+            fuzz = new Fuzz(l);
+            for (int i = 0; i < 3; i++) {
+                final ICitizenData c = colony.getCitizenManager().createAndRegisterCivilianData();
+                colony.getCitizenManager().spawnOrCreateCitizen(c, l, spawnPoint(l).offset(2 + 2 * i, 0, 2));
+                c.getInventory().forceArmorStackToSlot(net.minecraft.world.entity.EquipmentSlot.HEAD, fuzz.gear(Items.IRON_HELMET));
+                c.getInventory().forceArmorStackToSlot(net.minecraft.world.entity.EquipmentSlot.CHEST, fuzz.gear(Items.IRON_CHESTPLATE));
+                fuzz.colonists.add(c);
+                fuzz.gearIn += 2;
+            }
+            final int whBefore = ColonyScenarios.count(warehouse, null, BuildingRunesmith::isGear);
+            for (int i = 0; i < 6; i++) {
+                ColonyScenarios.stock(warehouse, fuzz.randomGear());
+            }
+            fuzz.gearIn += ColonyScenarios.count(warehouse, null, BuildingRunesmith::isGear) - whBefore;
+            check("fuzz set up", true, "level " + smithHut.getBuildingLevel() + ", " + fuzz.gearIn + " gear pieces out in the colony");
+            return true;
+        }));
+        steps.add(new Step("fuzz until 200 books are applied", 120000, l -> {
+            if (tick % 100 != 0) {
+                return false;
+            }
+            final int applied = ColonyScenarios.modLines("applied ").size();
+            if (applied >= 200) {
+                return true;
+            }
+            if (tick - fuzz.lastRound >= 1200 || ColonyScenarios.count(smithHut, smith, BuildingRunesmith::isBook) == 0) {
+                fuzz.round(l);
+                LOG.info(TAG + "fuzz round {}: {} applied so far, books in {}, gear in {}", fuzz.rounds, applied, fuzz.booksIn, fuzz.gearIn);
+            }
+            return false;
+        }));
+        settle(600);
+        steps.add(new Step("checks", 20, l -> {
+            final List<String> applied = ColonyScenarios.modLines("applied ");
+            final int lapisLogged = ColonyScenarios.lapisLogged(applied);
+            final int gearNow = ColonyScenarios.count(smithHut, smith, BuildingRunesmith::isGear)
+                    + ColonyScenarios.count(warehouse, null, BuildingRunesmith::isGear) + fuzz.colonistGear() + fuzz.gearTakenOut;
+            final int booksNow = ColonyScenarios.count(smithHut, smith, BuildingRunesmith::isBook);
+            final int lapisNow = ColonyScenarios.count(smithHut, smith, BuildingRunesmith::isLapis);
+            check("K at least 200 applied", applied.size() >= 200, applied.size() + " applied in " + fuzz.rounds + " rounds");
+            check("K gear conserved", gearNow == fuzz.gearIn, "in " + fuzz.gearIn + ", now " + gearNow + " (incl. " + fuzz.gearTakenOut + " taken out)");
+            check("K books conserved", booksNow + applied.size() + fuzz.booksTakenOut == fuzz.booksIn, "in " + fuzz.booksIn + ", left " + booksNow
+                    + ", applied " + applied.size() + ", taken out " + fuzz.booksTakenOut);
+            check("K lapis conserved", lapisNow + lapisLogged == fuzz.lapisIn, "in " + fuzz.lapisIn + ", left " + lapisNow + ", logged " + lapisLogged);
+            LOG.info(TAG + "K sources: rack {}, citizen {}, warehouse {}", applied.stream().filter(x -> x.contains("(rack)")).count(),
+                    applied.stream().filter(x -> x.contains("(citizen ")).count(), applied.stream().filter(x -> x.contains("(warehouse)")).count());
+            return true;
+        }));
+    }
+
+    private Fuzz fuzz;
+
+    /** The fuzz scenario's bookkeeping and its random stock. */
+    private final class Fuzz {
+        final java.util.Random random = new java.util.Random(20261003L);
+        final List<net.minecraft.core.Holder<net.minecraft.world.item.enchantment.Enchantment>> enchantments = new ArrayList<>();
+        final List<Item> gearItems = new ArrayList<>();
+        final List<ICitizenData> colonists = new ArrayList<>();
+        int gearIn;
+        int booksIn;
+        int lapisIn;
+        int gearTakenOut;
+        int booksTakenOut;
+        int rounds;
+        int lastRound;
+
+        Fuzz(final ServerLevel level) {
+            level.registryAccess().registryOrThrow(net.minecraft.core.registries.Registries.ENCHANTMENT).holders().forEach(enchantments::add);
+            for (final Item item : BuiltInRegistries.ITEM) {
+                if (BuildingRunesmith.isGear(new ItemStack(item))) {
+                    gearItems.add(item);
+                }
+            }
+        }
+
+        ItemStack gear(final Item item) {
+            return new ItemStack(item);
+        }
+
+        ItemStack randomGear() {
+            return new ItemStack(gearItems.get(random.nextInt(gearItems.size())));
+        }
+
+        ItemStack randomBook() {
+            final var e = enchantments.get(random.nextInt(enchantments.size()));
+            final ItemEnchantments.Mutable m = new ItemEnchantments.Mutable(ItemEnchantments.EMPTY);
+            m.set(e, 1 + random.nextInt(e.value().getMaxLevel()));
+            if (random.nextInt(6) == 0) { // now and then a book with two enchantments
+                final var f = enchantments.get(random.nextInt(enchantments.size()));
+                m.set(f, 1 + random.nextInt(f.value().getMaxLevel()));
+            }
+            final ItemStack b = new ItemStack(Items.ENCHANTED_BOOK);
+            b.set(DataComponents.STORED_ENCHANTMENTS, m.toImmutable());
+            return b;
+        }
+
+        int colonistGear() {
+            int n = 0;
+            for (final ICitizenData c : colonists) {
+                for (final net.minecraft.world.entity.EquipmentSlot s : new net.minecraft.world.entity.EquipmentSlot[] {
+                        net.minecraft.world.entity.EquipmentSlot.HEAD, net.minecraft.world.entity.EquipmentSlot.CHEST}) {
+                    n += BuildingRunesmith.isGear(c.getInventory().getArmorInSlot(s)) ? 1 : 0;
+                }
+            }
+            return n;
+        }
+
+        /**
+         * Takes worked gear (and, when the racks fill up, some of the rest and some books) out of the
+         * racks, and brings new gear, books and lapis. Everything is counted by what actually moved.
+         */
+        void round(final ServerLevel level) {
+            rounds++;
+            lastRound = tick;
+            final IItemHandler racks = smithHut.getItemHandlerCap((net.minecraft.core.Direction) null);
+            final int gearHeld = ColonyScenarios.count(smithHut, null, BuildingRunesmith::isGear);
+            final int booksHeld = ColonyScenarios.count(smithHut, null, BuildingRunesmith::isBook);
+            for (int i = 0; i < racks.getSlots(); i++) {
+                final ItemStack s = racks.getStackInSlot(i);
+                if (BuildingRunesmith.isGear(s) && (s.isEnchanted() && random.nextBoolean() || gearHeld > 20 && random.nextInt(3) == 0)) {
+                    gearTakenOut += racks.extractItem(i, 1, false).getCount();
+                } else if (BuildingRunesmith.isBook(s) && booksHeld > 30 && random.nextInt(3) == 0) {
+                    booksTakenOut += racks.extractItem(i, 1, false).getCount();
+                }
+            }
+            int before = ColonyScenarios.count(smithHut, smith, BuildingRunesmith::isGear);
+            for (int i = 0; i < 6; i++) {
+                ColonyScenarios.stock(smithHut, randomGear());
+            }
+            gearIn += ColonyScenarios.count(smithHut, smith, BuildingRunesmith::isGear) - before;
+            before = ColonyScenarios.count(smithHut, smith, BuildingRunesmith::isBook);
+            for (int i = 0; i < 14; i++) {
+                ColonyScenarios.stock(smithHut, randomBook());
+            }
+            booksIn += ColonyScenarios.count(smithHut, smith, BuildingRunesmith::isBook) - before;
+            before = ColonyScenarios.count(smithHut, smith, BuildingRunesmith::isLapis);
+            if (before < 64) {
+                ColonyScenarios.stock(smithHut, new ItemStack(Items.LAPIS_LAZULI, 64));
+            }
+            lapisIn += ColonyScenarios.count(smithHut, smith, BuildingRunesmith::isLapis) - before;
+        }
     }
 
     // ---------------------------------------------------------------- building blocks
@@ -886,8 +1244,27 @@ public final class RunesmithTest {
                 }
             }
         }
+        // The raw paste leaves Structurize's placeholder blocks in the world, which a builder never places:
+        // "solid substitution" (fill with ground) and "substitution" (keep the terrain). Pathfinding does not
+        // stand on them, and they walled the warehouse hall off from its door. They become what a builder
+        // would leave on this flat world: ground below the hut's level, air from it up.
+        int filled = 0;
+        final net.minecraft.world.level.block.Block solidFill = BuiltInRegistries.BLOCK.get(ResourceLocation.parse("structurize:blocksolidsubstitution"));
+        final net.minecraft.world.level.block.Block keep = BuiltInRegistries.BLOCK.get(ResourceLocation.parse("structurize:blocksubstitution"));
+        if (corners != null) {
+            for (final BlockPos p : BlockPos.betweenClosed(corners.getA(), corners.getB())) {
+                final net.minecraft.world.level.block.state.BlockState s = level.getBlockState(p);
+                if (s.is(solidFill) || s.is(keep)) {
+                    final boolean ground = s.is(solidFill) || p.getY() < pos.getY();
+                    level.setBlock(p, ground ? net.minecraft.world.level.block.Blocks.DIRT.defaultBlockState()
+                            : net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(), 3);
+                    filled++;
+                }
+            }
+        }
         check("register " + what, building.getBuildingLevel() >= 1, building.getClass().getSimpleName() + " level "
-                + building.getBuildingLevel() + " schematic " + building.getSchematicName() + " at " + pos + ", " + racks + " rack(s)");
+                + building.getBuildingLevel() + " schematic " + building.getSchematicName() + " at " + pos + ", " + racks + " rack(s), "
+                + filled + " placeholder(s) replaced");
         return building;
     }
 
@@ -967,6 +1344,69 @@ public final class RunesmithTest {
             }
         }
         return ItemStack.EMPTY;
+    }
+
+    /** One character per block, for the DIAG maps. */
+    private static char mapChar(final net.minecraft.world.level.block.state.BlockState s) {
+        if (s.isAir()) {
+            return '.';
+        }
+        final String id = BuiltInRegistries.BLOCK.getKey(s.getBlock()).getPath();
+        if (id.contains("door")) {
+            return 'D';
+        }
+        if (id.contains("rack")) {
+            return 'R';
+        }
+        if (id.startsWith("blockhut")) {
+            return 'H';
+        }
+        if (id.contains("stairs")) {
+            return 's';
+        }
+        if (id.contains("slab")) {
+            return '_';
+        }
+        if (id.contains("fence") || id.contains("wall")) {
+            return 'f';
+        }
+        if (id.contains("substitution")) {
+            return '?';
+        }
+        if (id.contains("dirt") || id.contains("grass") || id.contains("path")) {
+            return ',';
+        }
+        return s.blocksMotion() ? '#' : '~';
+    }
+
+    /** Where a worker is and what its navigation is doing, for diagnosing walks that never arrive. */
+    private static String navInfo(final ICitizenData data) {
+        final Optional<AbstractEntityCitizen> e = data.getEntity();
+        if (e.isEmpty()) {
+            return "no entity";
+        }
+        final StringBuilder sb = new StringBuilder(aiState(data)).append(" at ").append(e.get().blockPosition().toShortString());
+        if (data.getJob() instanceof me.lovkar.runesmith.colony.JobRunesmith j && !j.loans().isEmpty()) {
+            final BlockPos rack = j.loans().get(0).rack();
+            sb.append(", loan rack ").append(rack.toShortString()).append(" dist ")
+                    .append(String.format("%.1f", Math.sqrt(e.get().blockPosition().distSqr(rack))));
+        }
+        if (e.get().getNavigation() instanceof com.minecolonies.core.entity.pathfinding.navigation.MinecoloniesAdvancedPathNavigate nav) {
+            final com.minecolonies.core.entity.pathfinding.pathresults.PathResult<?> pr = nav.getPathResult();
+            sb.append(", nav done ").append(nav.isDone());
+            if (pr == null) {
+                sb.append(", no path result");
+            } else {
+                sb.append(", status ").append(pr.getStatus()).append(", reaches ").append(pr.isPathReachingDestination())
+                        .append(", len ").append(pr.getPathLength());
+                final Object job = pr.getJob();
+                sb.append(", job ").append(job == null ? "none" : job.getClass().getSimpleName());
+                if (job instanceof com.minecolonies.core.entity.pathfinding.pathjobs.IDestinationPathJob d) {
+                    sb.append(" -> ").append(d.getDestination().toShortString());
+                }
+            }
+        }
+        return sb.toString();
     }
 
     private static String aiState(final ICitizenData data) {

@@ -5,6 +5,7 @@ import com.minecolonies.api.colony.IColony;
 import com.minecolonies.api.entity.citizen.AbstractEntityCitizen;
 import com.minecolonies.api.inventory.InventoryCitizen;
 import com.minecolonies.core.colony.jobs.AbstractJobGuard;
+import com.minecolonies.core.util.citizenutils.CitizenItemUtils;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.EquipmentSlot;
@@ -70,10 +71,18 @@ public final class Citizens {
         return place == Place.HAND ? inv.getHeldItem(InteractionHand.MAIN_HAND) : inv.getArmorInSlot(place.slot);
     }
 
-    /** The citizen's inventory and the citizen's entity both show this piece at that place. */
+    /**
+     * The citizen has this piece at that place: in the inventory, and for armor also on the entity.
+     * For the hand only the inventory counts. MineColonies keeps the held slot in the inventory and
+     * lets the entity show the piece only while the AI has it equipped: a patrolling or sleeping guard
+     * holds his sword by the inventory while the entity's hand is empty.
+     */
     public static boolean shows(final ICitizenData citizen, final Place place, final ItemStack expected) {
         if (!ItemStack.matches(piece(citizen, place), expected)) {
             return false;
+        }
+        if (place == Place.HAND) {
+            return true;
         }
         final Optional<AbstractEntityCitizen> e = citizen.getEntity();
         return e.isEmpty() || ItemStack.matches(e.get().getItemBySlot(place.slot), expected);
@@ -82,7 +91,9 @@ public final class Citizens {
     /**
      * Puts the enchanted piece where the old one is, if the old one is still there. Armor is
      * cleared and set again, so the citizen takes off the old piece's attributes and puts on the
-     * new one's. Returns whether inventory and entity both show the enchanted piece afterwards.
+     * new one's. A held piece the entity shows is shown anew, so the entity never keeps the old copy
+     * (a guard would strike with it). Returns whether the citizen has the enchanted piece afterwards
+     * and the entity shows no old copy.
      */
     public static boolean replace(final ICitizenData citizen, final Place place, final ItemStack old, final ItemStack enchanted) {
         final InventoryCitizen inv = citizen.getInventory();
@@ -91,7 +102,12 @@ public final class Citizens {
             if (slot < 0 || slot >= inv.getSlots() || !ItemStack.matches(inv.getStackInSlot(slot), old)) {
                 return false;
             }
+            final boolean shown = citizen.getEntity().map(e -> ItemStack.matches(e.getItemBySlot(EquipmentSlot.MAINHAND), old)).orElse(false);
             inv.setStackInSlot(slot, enchanted.copy());
+            if (shown) {
+                // the entity keeps its own copy of what it holds: show the new one, as MineColonies does when it equips a tool
+                citizen.getEntity().ifPresent(e -> CitizenItemUtils.setMainHeldItem(e, slot));
+            }
         } else {
             if (!ItemStack.matches(inv.getArmorInSlot(place.slot), old)) {
                 return false;
@@ -99,6 +115,6 @@ public final class Citizens {
             inv.forceClearArmorInSlot(place.slot, old);
             inv.forceArmorStackToSlot(place.slot, enchanted.copy());
         }
-        return shows(citizen, place, enchanted);
+        return shows(citizen, place, enchanted) && citizen.getEntity().map(e -> !ItemStack.matches(e.getItemBySlot(place.slot), old)).orElse(true);
     }
 }

@@ -11,11 +11,11 @@
   "runesmith:runesmith.job.desc": "Takes enchanted books from the colony's stock and applies them to the armor, weapons and tools in the hut's racks, following the vanilla anvil rules. A book is only spent when the piece really changes.",
   "runesmith:runesmith.skills.desc": "Knowledge and Mana grow with the work. A higher building lets the Runesmith use stronger books.",
   "com.minecolonies.coremod.setting.runesmith:armor": "Enchant armor:",
-  "com.minecolonies.coremod.setting.tooltip.runesmith:armor": "Helmets, chestplates, leggings and boots in the racks.",
+  "com.minecolonies.coremod.setting.tooltip.runesmith:armor": "Helmets, chestplates, leggings and boots.",
   "com.minecolonies.coremod.setting.runesmith:weapons": "Enchant weapons:",
-  "com.minecolonies.coremod.setting.tooltip.runesmith:weapons": "Swords, axes, maces, bows, crossbows and tridents in the racks.",
+  "com.minecolonies.coremod.setting.tooltip.runesmith:weapons": "Swords, axes, maces, bows, crossbows and tridents.",
   "com.minecolonies.coremod.setting.runesmith:tools": "Enchant tools:",
-  "com.minecolonies.coremod.setting.tooltip.runesmith:tools": "Pickaxes, axes, shovels, hoes, shears and fishing rods in the racks.",
+  "com.minecolonies.coremod.setting.tooltip.runesmith:tools": "Pickaxes, axes, shovels, hoes, shears and fishing rods.",
   "com.minecolonies.coremod.setting.runesmith:levelcap": "Book level limited by building level:",
   "com.minecolonies.coremod.setting.tooltip.runesmith:levelcap": "A level N Runesmith only uses books whose enchantments are at most level N. Stronger books stay in the colony's stock until the building grows.",
   "com.minecolonies.coremod.setting.runesmith:onlyunenchanted": "Only unenchanted gear:",
@@ -23,5 +23,7 @@
   "com.minecolonies.coremod.setting.runesmith:lapis": "Lapis lazuli per book level:",
   "com.minecolonies.coremod.setting.tooltip.runesmith:lapis": "Each book also costs lapis lazuli, one per level of the book: a level I book one, a level V book five.",
   "com.minecolonies.coremod.setting.runesmith:colonists": "Visit colonists:",
+  "com.minecolonies.coremod.setting.runesmith:warehouse": "Borrow from the warehouse:",
+  "com.minecolonies.coremod.setting.tooltip.runesmith:warehouse": "The Runesmith also takes gear from the colony's warehouses, one piece at a time, enchants it at the anvil and puts it back where it was. Off by default: the warehouse holds what you may be keeping.",
   "com.minecolonies.coremod.setting.tooltip.runesmith:colonists": "The Runesmith also walks to colonists, guards first, and enchants the armor they wear and the tool or weapon they hold. A worker's tool is left alone when the enchantment would make it too good for his hut."
 }
