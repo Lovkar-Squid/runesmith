@@ -13,7 +13,8 @@ Made by **Lovkar & Claude** for NeoForge 1.21.1 and MineColonies.
 
 ## How to use it
 
-1. Build the **Runesmith** hut (crafted from planks, a build tool and an anvil) and hire a worker.
+1. Build the **Runesmith** hut (crafted from planks, a build tool and an anvil) in one of its three
+   looks, and hire a worker.
 2. Put the armor, weapons and tools you want enchanted into the hut's racks, plus some lapis
    lazuli.
 3. The Runesmith asks the colony for enchanted books, and couriers bring them from the warehouse.
@@ -31,6 +32,24 @@ Made by **Lovkar & Claude** for NeoForge 1.21.1 and MineColonies.
    never has to put it down.
 3. **The warehouse** (off by default). The Runesmith borrows one piece at a time from a warehouse
    rack, enchants it at his anvil and puts it back where it was.
+
+## The building
+
+The Runesmith's building comes in three looks, five levels each. You pick one in the build tool:
+
+| Look | What it is |
+| --- | --- |
+| **Forge Hall** | A stone smithy with a timber-and-plaster upper storey, a forge behind iron bars and a massive blackstone chimney. It grows a rune study and, at level 5, a tall hall with rose windows. |
+| **Rune Tower** | A tuff-brick smithy hall under a dark tower ringed with glowing runes. The tower rises with every level, up to an open rune-lantern stage and a needle spire. |
+| **Crystal Heart** | A round deepslate workshop under a verdigris copper roof, with an amethyst crystal growing out of its crown, a little more at every level. At level 5 a circle of rune stones rings it. |
+
+- **One footprint per look.** Every level of a look keeps the outline you placed, so an upgrade
+  never grows past it.
+- **Ground.** The builder leaves the ground around the building as it is: no digging, no filling.
+- **Placing it.** Place the hut the usual way and the raised floor lies flush with the ground.
+  Place it one block higher to see the building as drawn, on its plinth.
+- **Rare materials.** The higher levels ask for amethyst clusters (mined with Silk Touch) and
+  crying obsidian. A level 5 Crystal Heart also needs about 230 oxidized cut copper.
 
 ## Rules
 

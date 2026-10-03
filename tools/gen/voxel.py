@@ -1,87 +1,76 @@
-"""Voxel structures and the Structurize .blueprint format for the Runesmith buildings.
+"""Voxel structures for the Runesmith buildings.
 
-A Structure is a sparse dict of block positions -> block state strings
-("minecraft:spruce_door[facing=north,half=lower,hinge=left,open=false,powered=false]") plus the
-positioned tags of the building. The same data feeds the isometric preview and the .blueprint
-export, so what a human approves in the preview is exactly what MineColonies builds.
-
-Coordinates: x east, y up, z south (Minecraft). The origin is free; the export normalises to the
-bounding box.
-
-The file layout follows what MineColonies' own packs contain (checked against its Enchanter hut
-and against its racks, see checks.py): gzip NBT, version 1, palette plus a packed block array,
-the hut block entity with a `blueprintDataProvider` compound (schematic name, corners and the
-positioned tags, all relative to the hut block), and the hut position as Structurize's primary
-offset.
+A Structure is a sparse dict of positions -> block state strings, plus the positioned tags and the
+hut block as anchor (x east, y up, z south). On top of that: shape helpers (boxes, lines, rings,
+discs), block-state finishing as the game does on placement (stair corners, wall, fence and pane
+connections, wall posts), terrain for previews, and quick functional checks (one hut block, racks, a
+reachable work spot, doors with floor on both sides, light, no floating blocks). The gates a
+blueprint must pass before it ships are in gates.py; the file format is in blueprint.py.
 """
-import gzip
-import io
+import math
 import re
-from collections import Counter
+from collections import Counter, deque
 
-import nbtlib
-from nbtlib import tag as T
+from mcassets import assets, parse_state
 
 AIR = "minecraft:air"
-DATA_VERSION = 3955          # Minecraft 1.21.1, the "mcversion" of MineColonies' own blueprints
-
-RACK_BLOCK = "minecolonies:blockminecoloniesrack"
-RACK_ENTITY = "minecolonies:rack"      # block entity id MineColonies saves a rack with
-RACK_SLOTS = 27                        # a rack without research upgrades (tagSIze 0)
+HUT = "runesmith:blockhutrunesmith"
+RACK = "minecolonies:blockminecoloniesrack"
 
 _STATE = re.compile(r"^([a-z0-9_.-]+:[a-z0-9_./-]+)(?:\[(.*)\])?$")
+DIR = {"north": (0, 0, -1), "south": (0, 0, 1), "east": (1, 0, 0), "west": (-1, 0, 0),
+       "up": (0, 1, 0), "down": (0, -1, 0)}
+OPP = {"north": "south", "south": "north", "east": "west", "west": "east", "up": "down", "down": "up"}
+CCW = {"north": "west", "west": "south", "south": "east", "east": "north"}
+CW = {v: k for k, v in CCW.items()}
+HORIZ = ("north", "east", "south", "west")
 
 
-def parse_state(s):
-    """'ns:name[a=b,c=d]' -> ('ns:name', {'a': 'b', 'c': 'd'})"""
-    m = _STATE.match(s.strip())
-    if not m:
-        raise ValueError("bad block state: " + s)
-    name, props = m.group(1), {}
-    if m.group(2):
-        for kv in m.group(2).split(","):
-            k, v = kv.split("=")
-            props[k.strip()] = v.strip()
-    return name, props
+def short(state):
+    return parse_state(state)[0].split(":")[1] if state else ""
 
 
-def canon(s):
-    """The same state with its properties sorted, so equal states compare equal as strings."""
-    name, props = parse_state(s)
-    if not props:
-        return name
-    return name + "[" + ",".join(f"{k}={props[k]}" for k in sorted(props)) + "]"
+def with_props(state, **kw):
+    name, props = parse_state(state)
+    props.update({k: str(v).lower() if isinstance(v, bool) else str(v) for k, v in kw.items()})
+    return name + "[" + ",".join(f"{k}={props[k]}" for k in sorted(props)) + "]" if props else name
 
 
-def _empty_inventory():
-    """MineColonies saves every empty slot of a rack (and of a hut block, which is a rack too) as {empty: 1b}."""
-    return T.List[T.Compound]([T.Compound({"empty": T.Byte(1)}) for _ in range(RACK_SLOTS)])
+def is_stairs(st):
+    return st is not None and short(st).endswith("_stairs")
 
 
-def _pos(x, y, z):
-    return T.Compound({"x": T.Int(x), "y": T.Int(y), "z": T.Int(z)})
+def is_wall(st):
+    if st is None:
+        return False
+    n = short(st)
+    return n.endswith("_wall") and not any(n.endswith(x) for x in ("_wall_torch", "_wall_sign", "_wall_banner",
+                                                                    "_wall_head", "_wall_skull", "_wall_fan"))
 
 
-def rack_tile(x, y, z):
-    """The block entity of one rack, in the shape MineColonies' own blueprints store it."""
-    return T.Compound({
-        "id": T.String(RACK_ENTITY),
-        "x": T.Short(x), "y": T.Short(y), "z": T.Short(z),
-        "tagSIze": T.Int(0),
-        "inventory": _empty_inventory(),
-        "inWarehouse": T.Byte(0),
-        "pos": _pos(0, 0, 0),
-        "version": T.Byte(0),
-    })
+def is_fence(st):
+    return st is not None and short(st).endswith("_fence")
+
+
+def is_gate(st):
+    return st is not None and short(st).endswith("_fence_gate")
+
+
+def is_pane(st):
+    return st is not None and (short(st).endswith("glass_pane") or short(st) == "iron_bars")
+
+
+def solid_cube(st):
+    return st is not None and assets().bake(st).occluder
 
 
 class Structure:
     def __init__(self, name):
         self.name = name
-        self.blocks = {}       # (x, y, z) -> state string
-        self.tags = {}         # (x, y, z) -> [tag names]
-        self.anchor = None     # (x, y, z) of the hut block
-        self.raw = None        # the parsed NBT file, set by load_blueprint
+        self.blocks = {}
+        self.tags = {}
+        self.anchor = None
+        self.notes = {}          # free-form facts for the README (level, footprint...)
 
     # ---------------------------------------------------------------- editing
     def set(self, x, y, z, block):
@@ -93,15 +82,27 @@ class Structure:
     def get(self, x, y, z):
         return self.blocks.get((x, y, z))
 
-    def box(self, x0, y0, z0, x1, y1, z1, block, hollow=False):
-        """Inclusive box. hollow=True keeps only the shell."""
+    def clear(self, x0, y0, z0, x1, y1, z1):
+        self.box(x0, y0, z0, x1, y1, z1, None)
+
+    def box(self, x0, y0, z0, x1, y1, z1, block, hollow=False, only_empty=False):
         xa, xb = sorted((x0, x1)); ya, yb = sorted((y0, y1)); za, zb = sorted((z0, z1))
         for x in range(xa, xb + 1):
             for y in range(ya, yb + 1):
                 for z in range(za, zb + 1):
                     if hollow and xa < x < xb and ya < y < yb and za < z < zb:
                         continue
+                    if only_empty and (x, y, z) in self.blocks:
+                        continue
                     self.set(x, y, z, block)
+
+    def walls(self, x0, z0, x1, z1, y0, y1, block):
+        """The four walls of a rectangle (no floor or ceiling)."""
+        for y in range(y0, y1 + 1):
+            for x in range(x0, x1 + 1):
+                self.set(x, y, z0, block); self.set(x, y, z1, block)
+            for z in range(z0, z1 + 1):
+                self.set(x0, y, z, block); self.set(x1, y, z, block)
 
     def column(self, x, z, y0, y1, block):
         for y in range(min(y0, y1), max(y0, y1) + 1):
@@ -114,19 +115,13 @@ class Structure:
         self.anchor = (x, y, z)
         self.set(x, y, z, block)
 
-    def translated(self, dx, dy, dz):
-        """A copy moved by (dx, dy, dz), tags and anchor included."""
-        t = Structure(self.name)
-        t.blocks = {(x + dx, y + dy, z + dz): b for (x, y, z), b in self.blocks.items()}
-        t.tags = {(x + dx, y + dy, z + dz): list(n) for (x, y, z), n in self.tags.items()}
-        if self.anchor is not None:
-            t.anchor = (self.anchor[0] + dx, self.anchor[1] + dy, self.anchor[2] + dz)
+    def copy(self, name=None):
+        t = Structure(name or self.name)
+        t.blocks = dict(self.blocks)
+        t.tags = {p: list(n) for p, n in self.tags.items()}
+        t.anchor = self.anchor
+        t.notes = dict(self.notes)
         return t
-
-    def normalized(self):
-        """A copy whose bounding box starts at (0, 0, 0), which is where a blueprint file starts."""
-        (x0, y0, z0), _ = self.bounds()
-        return self.translated(-x0, -y0, -z0)
 
     # ---------------------------------------------------------------- queries
     def bounds(self):
@@ -140,142 +135,330 @@ class Structure:
     def count(self):
         return Counter(parse_state(b)[0] for b in self.blocks.values())
 
-    # ---------------------------------------------------------------- export
-    def to_blueprint(self, path, file_name, pack_name, pack_path, building_type, be_type,
-                     required_mods, architects=(), box=None):
-        """Write a Structurize v1 .blueprint (gzip NBT).
+    def find(self, name):
+        return [p for p, b in self.blocks.items() if parse_state(b)[0] == name]
 
-        file_name: 'runesmith1.blueprint'; pack_path: its path inside the pack,
-        'runesmith/runesmith1.blueprint'; building_type: the building's registry name,
-        'runesmith:runesmith'; be_type: the hut's block entity type, 'runesmith:colonybuilding'.
-        box: optional ((x0, y0, z0), (x1, y1, z1)) forcing the blueprint size (filled with air,
-        which the builder clears) so every level can share one footprint.
-        """
-        if self.anchor is None or self.anchor not in self.blocks:
-            raise ValueError("structure has no anchor (hut block)")
-        (x0, y0, z0), (x1, y1, z1) = self.bounds()
-        if box is not None:
-            (bx0, by0, bz0), (bx1, by1, bz1) = box
-            if bx0 > x0 or by0 > y0 or bz0 > z0 or bx1 < x1 or by1 < y1 or bz1 < z1:
-                raise ValueError(f"{self.name}: blocks {self.bounds()} exceed the box {box}")
-            (x0, y0, z0), (x1, y1, z1) = (bx0, by0, bz0), (bx1, by1, bz1)
-        sx, sy, sz = x1 - x0 + 1, y1 - y0 + 1, z1 - z0 + 1
-        ax, ay, az = self.anchor
+    # ---------------------------------------------------------------- finishing
+    def finalize(self):
+        """Set connection and shape properties the way the game would after placing every block."""
+        b = self.blocks
+        # stairs: corner shapes
+        for p, st in list(b.items()):
+            if is_stairs(st):
+                b[p] = with_props(st, shape=self._stair_shape(p, st))
+        # fences, panes, bars
+        for p, st in list(b.items()):
+            if is_fence(st) or is_pane(st):
+                props = {}
+                for d in HORIZ:
+                    dx, dy, dz = DIR[d]
+                    n = b.get((p[0] + dx, p[1] + dy, p[2] + dz))
+                    if is_fence(st):
+                        ok = (is_fence(n) and (short(n) == "nether_brick_fence") == (short(st) == "nether_brick_fence")) \
+                            or is_gate(n) or solid_cube(n)
+                    else:
+                        ok = is_pane(n) or is_wall(n) or solid_cube(n)
+                    props[d] = "true" if ok else "false"
+                b[p] = with_props(st, **props)
+        # walls: top down, so a wall knows whether the one above has a post
+        walls = sorted((p for p, st in b.items() if is_wall(st)), key=lambda p: -p[1])
+        for p in walls:
+            st = b[p]
+            above = b.get((p[0], p[1] + 1, p[2]))
+            above_full = solid_cube(above)
+            sides = {}
+            for d in HORIZ:
+                dx, dy, dz = DIR[d]
+                n = b.get((p[0] + dx, p[1], p[2] + dz))
+                con = is_wall(n) or is_pane(n) or is_gate(n) or solid_cube(n)
+                if not con:
+                    sides[d] = "none"
+                    continue
+                tall = above_full or (is_wall(above) and parse_state(above)[1].get(d, "none") != "none")
+                sides[d] = "tall" if tall else "low"
+            none = {d: sides[d] == "none" for d in HORIZ}
+            up_above = is_wall(above) and parse_state(above)[1].get("up") == "true"
+            isolated = all(none.values())
+            uneven = none["north"] != none["south"] or none["east"] != none["west"]
+            if up_above or isolated or uneven:
+                up = True
+            elif (sides["north"] == "tall" and sides["south"] == "tall") or (sides["east"] == "tall" and sides["west"] == "tall"):
+                up = False
+            else:
+                an = short(above) if above else ""
+                up = any(k in an for k in ("torch", "lantern", "candle", "banner", "sign", "chain", "end_rod",
+                                           "amethyst_cluster", "_bud", "fence")) or above_full
+            sides["up"] = "true" if up else "false"
+            b[p] = with_props(st, **sides)
+        return self
 
-        # palette in layer order, so the file does not depend on the order the design was built in
-        palette = [AIR]
-        index = {AIR: 0}
-        arr = [0] * (sx * sy * sz)
-        for (x, y, z) in sorted(self.blocks, key=lambda p: (p[1], p[2], p[0])):
-            b = canon(self.blocks[(x, y, z)])
-            if b not in index:
-                index[b] = len(palette)
-                palette.append(b)
-            arr[(y - y0) * sz * sx + (z - z0) * sx + (x - x0)] = index[b]
-        # two 16-bit palette indices per int, the first one in the high half
-        packed = []
-        for i in range(0, len(arr), 2):
-            hi = arr[i]
-            lo = arr[i + 1] if i + 1 < len(arr) else 0
-            v = (hi << 16) | lo
-            if v >= 1 << 31:
-                v -= 1 << 32
-            packed.append(v)
-        pal = T.List[T.Compound]()
-        for b in palette:
-            name, props = parse_state(b)
-            c = T.Compound({"Name": T.String(name)})
-            if props:
-                c["Properties"] = T.Compound({k: T.String(props[k]) for k in sorted(props)})
-            pal.append(c)
+    def _stair_shape(self, p, st):
+        _, pr = parse_state(st)
+        f, half = pr.get("facing", "north"), pr.get("half", "bottom")
 
-        # positioned tags are stored relative to the hut block
-        tag_map = T.List[T.Compound]([
-            T.Compound({
-                "tagPos": _pos(tx - ax, ty - ay, tz - az),
-                "tagNameList": T.List[T.Compound]([T.Compound({"tagName": T.String(n)}) for n in names]),
-            })
-            for (tx, ty, tz), names in sorted(self.tags.items())
-        ]) if self.tags else T.List([])
-        schematic_name = file_name.replace(".blueprint", "")
-        hut = T.Compound({
-            "id": T.String(be_type),
-            "x": T.Short(ax - x0), "y": T.Short(ay - y0), "z": T.Short(az - z0),
-            "colony": T.Int(0),
-            "inWarehouse": T.Byte(0),
-            "tagSIze": T.Int(0),
-            "inventory": _empty_inventory(),
-            "pos": _pos(0, 0, 0),
-            "type": T.String(building_type),
-            "version": T.Int(2),
-            "pack": T.String(pack_name),
-            "path": T.String(pack_path),
-            "blueprintDataProvider": T.Compound({
-                "corner1": _pos(x0 - ax, y0 - ay, z0 - az),
-                "corner2": _pos(x1 - ax, y1 - ay, z1 - az),
-                "path": T.String(pack_path),
-                "schematicName": T.String(schematic_name),
-                "pack": T.String(pack_name),
-                "posTagMap": tag_map,
-            }),
-        })
-        # keyed by design position (for a stable order); each entry carries blueprint-relative x, y, z
-        tiles = {(ax, ay, az): hut}
-        for (x, y, z), b in self.blocks.items():
-            if parse_state(b)[0] == RACK_BLOCK:
-                tiles[(x, y, z)] = rack_tile(x - x0, y - y0, z - z0)
-        tile_list = [tiles[p] for p in sorted(tiles, key=lambda p: (p[1], p[2], p[0]))]
+        def stair_at(d):
+            dx, dy, dz = DIR[d]
+            n = self.blocks.get((p[0] + dx, p[1] + dy, p[2] + dz))
+            if is_stairs(n):
+                return parse_state(n)[1]
+            return None
 
-        root = T.Compound({
-            "version": T.Byte(1),
-            "mcversion": T.Int(DATA_VERSION),
-            "name": T.String(schematic_name),
-            "size_x": T.Short(sx), "size_y": T.Short(sy), "size_z": T.Short(sz),
-            "required_mods": T.List[T.String]([T.String(m) for m in required_mods]),
-            "architects": T.List[T.String]([T.String(a) for a in architects]),
-            "palette": pal,
-            "blocks": T.IntArray(packed),
-            "tile_entities": T.List[T.Compound](tile_list),
-            "entities": T.List([]),
-            "optional_data": T.Compound({"structurize": T.Compound({"primary_offset": _pos(ax - x0, ay - y0, az - z0)})}),
-        })
-        # gzip with a zero timestamp, like Java's GZIPOutputStream: the same design always gives the same bytes
-        raw = io.BytesIO()
-        nbtlib.File(root, gzipped=False).write(raw)
-        with open(path, "wb") as fh:
-            with gzip.GzipFile(filename="", mode="wb", fileobj=fh, compresslevel=9, mtime=0) as gz:
-                gz.write(raw.getvalue())
-        return path
+        def can_take(d):
+            o = stair_at(d)
+            return o is None or o.get("facing") != f or o.get("half") != half
+
+        front = stair_at(f)
+        if front and front.get("half") == half:
+            ff = front.get("facing")
+            if ff in HORIZ and (ff in ("east", "west")) != (f in ("east", "west")) and can_take(OPP[ff]):
+                return "outer_left" if ff == CCW[f] else "outer_right"
+        back = stair_at(OPP[f])
+        if back and back.get("half") == half:
+            bf = back.get("facing")
+            if bf in HORIZ and (bf in ("east", "west")) != (f in ("east", "west")) and can_take(bf):
+                return "inner_left" if bf == CCW[f] else "inner_right"
+        return "straight"
 
 
-def load_blueprint(path):
-    """Read a .blueprint back into a Structure (for verification). The parsed NBT stays in .raw."""
-    f = nbtlib.load(path)
-    sx, sy, sz = int(f["size_x"]), int(f["size_y"]), int(f["size_z"])
-    arr = []
-    for v in f["blocks"]:
-        v = int(v) & 0xFFFFFFFF
-        arr += [(v >> 16) & 0xFFFF, v & 0xFFFF]
-    pal = []
-    for p in f["palette"]:
-        name = str(p["Name"])
-        if "Properties" in p:
-            name += "[" + ",".join(f"{k}={p['Properties'][k]}" for k in sorted(p["Properties"].keys())) + "]"
-        pal.append(name)
-    s = Structure(str(f["name"]))
-    s.raw = f
-    for y in range(sy):
-        for z in range(sz):
-            for x in range(sx):
-                b = pal[arr[y * sz * sx + z * sx + x]]
-                if b != AIR:
-                    s.set(x, y, z, b)
-    po = f["optional_data"]["structurize"]["primary_offset"]
-    s.anchor = (int(po["x"]), int(po["y"]), int(po["z"]))
-    ax, ay, az = s.anchor
-    for te in f["tile_entities"]:
-        if (int(te["x"]), int(te["y"]), int(te["z"])) == s.anchor and "blueprintDataProvider" in te:
-            for entry in te["blueprintDataProvider"]["posTagMap"]:
-                p = entry["tagPos"]
-                s.tags[(ax + int(p["x"]), ay + int(p["y"]), az + int(p["z"]))] = [str(n["tagName"]) for n in entry["tagNameList"]]
-    return s
+# ---------------------------------------------------------------------- terrain for previews and checks
+def with_ground(s, margin=3, ground_y=1, top="minecraft:grass_block[snowy=false]", depth=3, path=None,
+                keep_out=None):
+    """A copy of the structure standing on a rectangular island of terrain (preview dressing, not part
+    of the building): grass at ground_y wherever the building has nothing, dirt below.
+    path: optional list of (x, z) cells paved with a dirt path instead of grass."""
+    (x0, y0, z0), (x1, y1, z1) = s.bounds()
+    t = s.copy()
+    paths = set(path or [])
+    for x in range(x0 - margin, x1 + margin + 1):
+        for z in range(z0 - margin, z1 + margin + 1):
+            for y in range(ground_y - depth, ground_y + 1):
+                if (x, y, z) in s.blocks:
+                    continue
+                if y == ground_y:
+                    blk = "minecraft:dirt_path" if (x, z) in paths else top
+                    # nothing grows under the building's own blocks
+                    if (x, y + 1, z) in s.blocks and blk == top and solid_cube(s.blocks[(x, y + 1, z)]):
+                        blk = "minecraft:dirt"
+                else:
+                    blk = "minecraft:dirt" if y > ground_y - depth else "minecraft:coarse_dirt"
+                t.blocks[(x, y, z)] = blk
+    t.notes["island"] = (x0 - margin, z0 - margin, x1 + margin, z1 + margin, ground_y - depth)
+    return t
+
+
+# ---------------------------------------------------------------------- functional checks
+LIGHT = {
+    "lantern": 15, "soul_lantern": 10, "torch": 14, "wall_torch": 14, "soul_torch": 10, "soul_wall_torch": 10,
+    "campfire": 15, "soul_campfire": 10, "glowstone": 15, "sea_lantern": 15, "shroomlight": 15,
+    "crying_obsidian": 10, "magma_block": 3, "amethyst_cluster": 5, "large_amethyst_bud": 4,
+    "medium_amethyst_bud": 2, "small_amethyst_bud": 1, "end_rod": 14, "jack_o_lantern": 15,
+    "blast_furnace": 13, "furnace": 13, "smoker": 13, "enchanting_table": 0, "respawn_anchor": 15,
+    "ochre_froglight": 15, "verdant_froglight": 15, "pearlescent_froglight": 15, "redstone_lamp": 15,
+}
+
+
+def light_level_of(st):
+    name, props = parse_state(st)
+    n = name.split(":")[1]
+    if n.endswith("candle"):
+        return 3 * int(props.get("candles", "1")) if props.get("lit") == "true" else 0
+    if n in ("campfire", "soul_campfire") and props.get("lit") == "false":
+        return 0
+    if n in ("blast_furnace", "furnace", "smoker"):
+        return 0                # without fuel a furnace goes out on its first tick
+    if n == "redstone_lamp" and props.get("lit") != "true":
+        return 0
+    if n.endswith("copper_bulb"):
+        if props.get("lit") != "true":
+            return 0
+        return {"copper_bulb": 15, "exposed_copper_bulb": 12, "weathered_copper_bulb": 8,
+                "oxidized_copper_bulb": 4}.get(n.replace("waxed_", ""), 15)
+    return LIGHT.get(n, 0)
+
+
+def passable(st):
+    """Can a colonist walk through this cell?"""
+    if st is None:
+        return True
+    name, props = parse_state(st)
+    n = name.split(":")[1]
+    if n in ("air", "cave_air"):
+        return True
+    if n.endswith("trapdoor"):
+        return props.get("open") == "true"
+    if n.endswith("_door"):
+        return True
+    if n in ("lantern", "soul_lantern"):
+        return props.get("hanging") == "true"
+    if n == "chain":
+        return True
+    if n.endswith("carpet") or n.endswith("pressure_plate") or n.endswith("button") or n.endswith("torch"):
+        return True
+    if n.endswith("_sign") or n.endswith("_banner") or n in ("lever", "tripwire", "vine", "short_grass", "fern",
+                                                                "tall_grass", "large_fern", "snow"):
+        return True
+    return False
+
+
+def supports(st):
+    """Can a colonist stand on top of this block?"""
+    if st is None or passable(st):
+        return False
+    n = short(st)
+    if is_fence(st) or is_wall(st) or is_gate(st):
+        return False          # too high to step onto
+    return True
+
+
+def check(s, ground_y=1, floor_y=None, verbose=False):
+    """Functional checks; returns (ok, report lines, facts)."""
+    lines = []
+    ok = True
+    facts = {}
+    huts = s.find(HUT)
+    if len(huts) != 1:
+        ok = False
+        lines.append(f"FAIL hut blocks: {len(huts)} (need exactly 1)")
+    else:
+        lines.append(f"ok   hut block at {huts[0]}")
+    racks = [p for p in s.find(RACK) if parse_state(s.blocks[p])[1].get("variant") != "blockrackair"]
+    doubles = [p for p in racks if parse_state(s.blocks[p])[1].get("variant") in ("blockrackempty", "blockrackfull")]
+    facts["racks"] = len(racks)
+    facts["rack_slots"] = 27 * len(racks) + 27 * len(doubles)
+    if len(racks) < 2:
+        ok = False
+        lines.append(f"FAIL racks: {len(racks)}")
+    else:
+        lines.append(f"ok   racks: {len(racks)} ({len(doubles)} double)")
+    anvils = [p for p in s.blocks if short(s.blocks[p]) in ("anvil", "chipped_anvil", "damaged_anvil")]
+    work = [p for p, names in s.tags.items() if "work" in names]
+    if len(work) != 1:
+        ok = False
+        lines.append(f"FAIL work tags: {len(work)}")
+    # terrain so the outside counts as walkable ground
+    t = with_ground(s, margin=4, ground_y=ground_y)
+    B = t.blocks
+
+    def standable(x, y, z):
+        return supports(B.get((x, y - 1, z))) and passable(B.get((x, y, z))) and passable(B.get((x, y + 1, z)))
+
+    (x0, y0, z0), (x1, y1, z1) = t.bounds()
+    start = [(x0 + 1, ground_y + 1, z0 + 1)]
+    seen = set(start)
+    dq = deque(start)
+    while dq:
+        x, y, z = dq.popleft()
+        for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            for dy in (0, 1, -1):
+                nx, ny, nz = x + dx, y + dy, z + dz
+                if not (x0 <= nx <= x1 and z0 <= nz <= z1 and y0 <= ny <= y1 + 2):
+                    continue
+                if (nx, ny, nz) in seen or not standable(nx, ny, nz):
+                    continue
+                if dy == 1 and not passable(B.get((x, y + 2, z))):
+                    continue
+                if dy == -1 and not passable(B.get((nx, ny + 2, nz))):
+                    continue
+                # a door can only be passed along its facing axis
+                d_here = short(B.get((nx, ny, nz)) or "")
+                if d_here.endswith("_door"):
+                    f = parse_state(B[(nx, ny, nz)])[1].get("facing")
+                    if (f in ("north", "south")) != (dz != 0):
+                        continue
+                seen.add((nx, ny, nz))
+                dq.append((nx, ny, nz))
+                break
+    facts["reachable"] = len(seen)
+    for a in anvils:
+        spots = [(a[0] + dx, a[1], a[2] + dz) for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1))]
+        good = [p for p in spots if p in seen]
+        if not good:
+            ok = False
+            lines.append(f"FAIL anvil {a}: no reachable standing spot next to it")
+        else:
+            lines.append(f"ok   anvil {a}: reachable standing spot(s) {good}")
+    if not anvils:
+        ok = False
+        lines.append("FAIL no anvil")
+    if huts:
+        h = huts[0]
+        near = [(h[0] + dx, h[1], h[2] + dz) for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1))]
+        if not any(p in seen for p in near):
+            ok = False
+            lines.append("FAIL hut block not reachable")
+    # doors: floor on both sides
+    for p, st in s.blocks.items():
+        n, pr = parse_state(st)
+        if n.endswith("_door") and pr.get("half") == "lower":
+            f = pr.get("facing")
+            dx, _, dz = DIR[f]
+            sides = [(p[0] + dx, p[1], p[2] + dz), (p[0] - dx, p[1], p[2] - dz)]
+            bad = [q for q in sides if not standable(*q)]
+            if bad or not supports(B.get((p[0], p[1] - 1, p[2]))):
+                ok = False
+                lines.append(f"FAIL door {p}: no floor/clearance at {bad}")
+    # light: flood fill through everything that is not an opaque cube
+    lvl = {}
+    dq = deque()
+    for p, st in B.items():
+        L = light_level_of(st)
+        if L > 0:
+            lvl[p] = L
+            dq.append(p)
+    while dq:
+        p = dq.popleft()
+        L = lvl[p]
+        if L <= 1:
+            continue
+        for d in DIR.values():
+            q = (p[0] + d[0], p[1] + d[1], p[2] + d[2])
+            if not (x0 - 1 <= q[0] <= x1 + 1 and y0 - 1 <= q[1] <= y1 + 3 and z0 - 1 <= q[2] <= z1 + 1):
+                continue
+            if solid_cube(B.get(q)):
+                continue
+            if lvl.get(q, 0) < L - 1:
+                lvl[q] = L - 1
+                dq.append(q)
+    def enclosed(p):
+        # covered from above, and a wall within reach in all four directions: inside, not under an eave
+        if not any(solid_cube(s.blocks.get((p[0], y, p[2]))) for y in range(p[1] + 2, p[1] + 14)):
+            return False
+        for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            if not any(s.blocks.get((p[0] + dx * k, p[1] + dy, p[2] + dz * k)) is not None
+                       and not passable(s.blocks.get((p[0] + dx * k, p[1] + dy, p[2] + dz * k)))
+                       for k in range(1, 13) for dy in (0, 1)):
+                return False
+        return True
+
+    inside = [p for p in seen if enclosed(p)]
+    if inside:
+        vals = [lvl.get(p, 0) for p in inside]
+        facts["light_min"] = min(vals)
+        facts["light_mean"] = sum(vals) / len(vals)
+        tag = "ok  " if min(vals) >= 8 else "WARN"
+        lines.append(f"{tag} interior light: min {min(vals)}, mean {sum(vals) / len(vals):.1f} over {len(vals)} cells")
+    # floating blocks: everything must connect to the ground through faces
+    grounded = set()
+    dq = deque(p for p in s.blocks if p[1] <= ground_y)
+    grounded.update(dq)
+    while dq:
+        p = dq.popleft()
+        for d in DIR.values():
+            q = (p[0] + d[0], p[1] + d[1], p[2] + d[2])
+            if q in s.blocks and q not in grounded:
+                grounded.add(q)
+                dq.append(q)
+    floating = [p for p in s.blocks if p not in grounded]
+    if floating:
+        ok = False
+        lines.append(f"FAIL floating blocks: {len(floating)} e.g. {floating[:5]}")
+    else:
+        lines.append("ok   no floating blocks")
+    (bx0, by0, bz0), (bx1, by1, bz1) = s.bounds()
+    facts["footprint"] = (bx1 - bx0 + 1, bz1 - bz0 + 1)
+    facts["height"] = by1 - ground_y      # blocks above the ground surface
+    facts["total_height"] = by1 - by0 + 1
+    facts["blocks"] = len(s.blocks)
+    lines.append(f"     footprint {facts['footprint'][0]} x {facts['footprint'][1]}, height above ground {facts['height']}"
+                 f" (blueprint {facts['total_height']} incl. foundation), {len(s.blocks)} blocks")
+    return ok, lines, facts

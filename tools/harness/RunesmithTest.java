@@ -138,6 +138,7 @@ public final class RunesmithTest {
             case "l" -> scenarioL();
             case "w" -> scenarioW();
             case "k" -> scenarioK();
+            case "p" -> scenarioP();
             default -> steps.add(new Step("unknown scenario '" + scenario + "'", 1, l -> {
                 check("scenario known", false, scenario);
                 return true;
@@ -284,7 +285,7 @@ public final class RunesmithTest {
     /** A colony with a level-1 Runesmith and its worker; the book-level cap off unless asked for. */
     private void runesmithColony(final boolean levelCap) {
         world();
-        steps.add(new Step("paste the Runesmith (level 1)", 20, l -> paste(l, "Runesmith", "runesmith/runesmith1.blueprint", smithPos())));
+        steps.add(new Step("paste the Runesmith (Forge Hall, level 1)", 20, l -> paste(l, "Runesmith", "runesmith/forgehall1.blueprint", smithPos())));
         steps.add(new Step("Runesmith pasted", 6000, l -> pasted(l, smithPos())));
         steps.add(new Step("register the Runesmith", 200, l -> (smithHut = register(l, smithPos(), "runesmith")) != null));
         steps.add(new Step("hire a Runesmith", 200, l -> {
@@ -920,6 +921,95 @@ public final class RunesmithTest {
                     && ColonyScenarios.count(smithHut, smith, s -> s.is(Items.IRON_SWORD)) == 0, "");
             check("W no loan left open", smith.getJob() instanceof me.lovkar.runesmith.colony.JobRunesmith j && j.loans().isEmpty(), "");
             invariant("W");
+            return true;
+        }));
+    }
+
+    /** The three looks of the Runesmith's building, as the structure pack names their blueprints. */
+    private static final String[] LOOKS = {"forgehall", "runetower", "crystalheart"};
+    private final List<IBuilding> packHuts = new ArrayList<>();
+    private final List<ICitizenData> packSmiths = new ArrayList<>();
+    private final List<String> packNames = new ArrayList<>();
+
+    /** Five huts in a row per look, north and south of the town hall, inside the force-loaded chunks. */
+    private BlockPos packPos(final int look, final int level) {
+        return center.offset(-80 + 32 * (level - 1), 0, new int[] {-60, 40, 90}[look]);
+    }
+
+    /**
+     * P: the structure pack. Every level of every look is pasted the usual way (the hut block one
+     * above the grass), registered and staffed. Each hut gets a sword, a Sharpness I book and lapis,
+     * and every one of the fifteen Runesmiths must walk to his anvil and enchant the sword there. Also
+     * checks the level each blueprint gives its building, and that every rack became a container.
+     */
+    private void scenarioP() {
+        world();
+        for (int look = 0; look < LOOKS.length; look++) {
+            for (int level = 1; level <= 5; level++) {
+                final int lk = look;
+                final int lv = level;
+                final String path = "runesmith/" + LOOKS[lk] + lv + ".blueprint";
+                steps.add(new Step("paste " + path, 20, l -> paste(l, "Runesmith", path, packPos(lk, lv))));
+                steps.add(new Step(path + " pasted", 6000, l -> pasted(l, packPos(lk, lv))));
+                steps.add(new Step("register " + path, 200, l -> {
+                    final IBuilding b = register(l, packPos(lk, lv), LOOKS[lk] + lv);
+                    if (b == null) {
+                        return false;
+                    }
+                    final int racks = (int) b.getContainers().stream().filter(c -> !c.equals(b.getPosition())).count();
+                    check(LOOKS[lk] + lv + " level", b.getBuildingLevel() == lv, "level " + b.getBuildingLevel() + ", " + racks + " rack(s)");
+                    if (b.getBuildingLevel() != lv) {
+                        b.setBuildingLevel(lv);
+                    }
+                    packHuts.add(b);
+                    packNames.add(LOOKS[lk] + lv);
+                    return true;
+                }));
+            }
+        }
+        steps.add(new Step("hire fifteen Runesmiths", 400, l -> {
+            for (final IBuilding b : packHuts) {
+                packSmiths.add(hire(l, b));
+            }
+            check("fifteen Runesmiths hired", packSmiths.stream().allMatch(c -> c != null && c.getJob() instanceof me.lovkar.runesmith.colony.JobRunesmith),
+                    packSmiths.size() + " hired");
+            return true;
+        }));
+        steps.add(new Step("stock: a sword, a Sharpness I book and 4 lapis in every hut", 40, l -> {
+            boolean ok = true;
+            for (final IBuilding b : packHuts) {
+                ok &= ColonyScenarios.stock(b, new ItemStack(Items.IRON_SWORD), ColonyScenarios.book(l, Enchantments.SHARPNESS, 1),
+                        new ItemStack(Items.LAPIS_LAZULI, 4));
+            }
+            check("every hut stocked", ok, "");
+            return true;
+        }));
+        steps.add(new Step("every Runesmith enchants his sword at his anvil", 15000, l -> {
+            final List<String> waiting = new ArrayList<>();
+            for (int i = 0; i < packHuts.size(); i++) {
+                final IBuilding b = packHuts.get(i);
+                final boolean done = ColonyScenarios.all(b, packSmiths.get(i), Items.IRON_SWORD).stream()
+                        .anyMatch(st -> ColonyScenarios.level(l, st, Enchantments.SHARPNESS) == 1);
+                if (!done) {
+                    waiting.add(packNames.get(i) + " (" + aiState(packSmiths.get(i)) + ", " + who(packSmiths.get(i)) + ")");
+                }
+            }
+            if (tick % 1200 == 0) {
+                LOG.info(TAG + "waiting for {} of {}: {}", waiting.size(), packHuts.size(), waiting);
+            }
+            return tick % 20 == 0 && waiting.isEmpty();
+        }));
+        settle(100);
+        steps.add(new Step("checks", 20, l -> {
+            final List<String> applied = ColonyScenarios.modLines("applied ");
+            check("P one applied line per hut", applied.size() == packHuts.size(), applied.size() + " applied lines for " + packHuts.size() + " huts");
+            for (int i = 0; i < packHuts.size(); i++) {
+                final IBuilding b = packHuts.get(i);
+                final String at = "hut=" + b.getPosition().toShortString() + " ";
+                check("P " + packNames.get(i) + " enchanted at its anvil", applied.stream().filter(a -> a.contains(at)).count() == 1
+                        && ColonyScenarios.count(b, packSmiths.get(i), BuildingRunesmith::isBook) == 0,
+                        "level " + b.getBuildingLevel() + ", work tag " + b.getLocationsFromTag(BuildingRunesmith.TAG_WORK));
+            }
             return true;
         }));
     }

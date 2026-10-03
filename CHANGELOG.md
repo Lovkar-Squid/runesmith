@@ -24,4 +24,9 @@
   - lapis;
   - colonists;
   - warehouse.
-- **Logging**: every action is one `[Runesmith]` line in the log.
+- **The building in three looks**: Forge Hall, Rune Tower and Crystal Heart, five levels each, as
+  alternatives in the bundled *Runesmith* structure pack. Every level of a look keeps one footprint.
+- **The hut block**: a small anvil with an enchanted book on a plinth of glowing runes, with an
+  amethyst cluster. Drawn from vanilla textures.
+- **Logging**: every action is one `[Runesmith]` line in the log. A pair of gear and book that cannot
+  go together is logged once, and again only when a setting or the building's level changes.
