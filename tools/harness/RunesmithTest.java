@@ -144,6 +144,7 @@ public final class RunesmithTest {
             case "s" -> scenarioS();
             case "u" -> scenarioU();
             case "v" -> scenarioV();
+            case "voices" -> scenarioVoices();
             default -> steps.add(new Step("unknown scenario '" + scenario + "'", 1, l -> {
                 check("scenario known", false, scenario);
                 return true;
@@ -614,6 +615,51 @@ public final class RunesmithTest {
             check("V he moves about", farthest[0] >= 1.5, String.format("farthest %.1f blocks from where he stood", farthest[0]));
             check("V nothing requested, nothing applied", ColonyScenarios.modLines("requested ").isEmpty()
                     && ColonyScenarios.modLines("applied ").isEmpty(), "");
+            return true;
+        }));
+    }
+
+    /**
+     * Voices: every job in the game has voice lines for every event. MineColonies looks a citizen's
+     * lines up by job path and throws in SoundUtils for a job it has none for, which takes the server
+     * tick down (Colonies at War 0.2.0's Explorer did, when a player bumped into him). On the plain
+     * rig this checks the Runesmith's own lines; on a modpack copy it checks every addon's jobs. The
+     * Runesmith also says every line once, on the real path.
+     */
+    private void scenarioVoices() {
+        runesmithColony(false);
+        steps.add(new Step("checks", 20, l -> {
+            final Map<String, Map<com.minecolonies.api.sounds.EventType, List<com.minecolonies.api.util.Tuple<net.minecraft.sounds.SoundEvent,
+                    net.minecraft.sounds.SoundEvent>>>> voices = com.minecolonies.api.sounds.ModSoundEvents.CITIZEN_SOUND_EVENTS;
+            final var base = voices.get("unemployed");
+            final List<String> silent = new ArrayList<>();
+            final List<ResourceLocation> jobs = new ArrayList<>(com.minecolonies.api.colony.jobs.registry.IJobRegistry.getInstance().keySet());
+            jobs.sort(null);
+            for (final ResourceLocation id : jobs) {
+                if (id.toString().equals("minecolonies:placeholder")) {
+                    continue; // MineColonies' own stand-in job (JobPlaceholder): it gives it no lines either
+                }
+                final var lines = voices.get(id.getPath());
+                boolean ok = lines != null && base != null;
+                for (final com.minecolonies.api.sounds.EventType type : com.minecolonies.api.sounds.EventType.values()) {
+                    ok = ok && lines.get(type) != null && base.get(type) != null && lines.get(type).size() >= base.get(type).size();
+                }
+                if (!ok) {
+                    silent.add(id.toString());
+                }
+            }
+            LOG.info(TAG + "voices: {} jobs: {}", jobs.size(), jobs);
+            check("voices every job has lines for every event", !jobs.isEmpty() && silent.isEmpty(),
+                    jobs.size() + " jobs, without lines: " + (silent.isEmpty() ? "none" : String.join(", ", silent)));
+            final List<String> thrown = new ArrayList<>();
+            for (final com.minecolonies.api.sounds.EventType type : com.minecolonies.api.sounds.EventType.values()) {
+                try {
+                    com.minecolonies.api.util.SoundUtils.playSoundAtCitizenWith(l, smithHut.getPosition(), type, smith);
+                } catch (final RuntimeException e) {
+                    thrown.add(type + ": " + e);
+                }
+            }
+            check("voices the Runesmith says every line", thrown.isEmpty(), thrown.isEmpty() ? "" : String.join(" | ", thrown));
             return true;
         }));
     }
