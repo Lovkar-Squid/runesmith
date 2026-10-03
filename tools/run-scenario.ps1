@@ -1,6 +1,6 @@
 # Run one headless scenario on the test server in ..\..\rig and report.
 #
-#   powershell -NoProfile -ExecutionPolicy Bypass -File tools\run-scenario.ps1 -Name boot [-Words "rate=100"] [-TimeoutSec 420] [-KeepWorld]
+#   powershell -NoProfile -ExecutionPolicy Bypass -File tools\run-scenario.ps1 -Name boot [-Words "rate=100"] [-TimeoutSec 420] [-KeepWorld] [-Rig rig]
 #
 # Copies the current Runesmith and harness jars from ..\..\out into rig\mods, wipes rig\world unless
 # -KeepWorld, writes rig\runesmith-test.txt, starts the server and waits for the harness's RESULT line
@@ -12,13 +12,16 @@ param(
   [Parameter(Mandatory = $true)][string]$Name,
   [string]$Words = '',
   [int]$TimeoutSec = 420,
-  [switch]$KeepWorld
+  [switch]$KeepWorld,
+  # another server folder next to rig\ (the final compatibility run uses a copy with a modpack's mods)
+  [string]$Rig = 'rig'
 )
 
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 $work = (Resolve-Path (Join-Path $repo '..\..')).Path
-$rig  = Join-Path $work 'rig'
+$rigName = $Rig                    # PowerShell names are case-insensitive: $rig below replaces $Rig
+$rig  = Join-Path $work $rigName
 $jdk  = if ($env:RUNESMITH_JDK) { $env:RUNESMITH_JDK } else { Join-Path $work 'tools\jdk21' }
 $java = Join-Path $jdk 'bin\java.exe'
 $mods = Join-Path $rig 'mods'
@@ -36,7 +39,7 @@ if (-not $KeepWorld) {
   $world = Join-Path $rig 'world'
   if (Test-Path $world) {
     $full = (Resolve-Path $world).Path
-    if (-not $full.EndsWith('\rig\world')) { throw "refusing to delete $full" }
+    if (-not $full.EndsWith("\$rigName\world")) { throw "refusing to delete $full" }
     Remove-Item $full -Recurse -Force
   }
 }

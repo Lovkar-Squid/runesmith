@@ -5,7 +5,7 @@ issueTrackerURL="https://github.com/Lovkar-Squid/runesmith/issues"
 
 [[mods]]
 modId="runesmith"
-version="0.1.0-alpha.1"
+version="0.1.0-beta.1"
 displayName="Runesmith"
 description='''A MineColonies profession that puts the Enchanter's books to work: the Runesmith applies enchanted books to the colony's armor, weapons and tools by the vanilla anvil rules, at no XP cost. Made by Lovkar & Claude.'''
 authors="Lovkar & Claude"

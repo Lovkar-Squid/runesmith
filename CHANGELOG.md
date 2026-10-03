@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.1.0-beta.1]
 
 ### Added
 - **The Runesmith**: a MineColonies hut with one worker who applies enchanted books to armor,
