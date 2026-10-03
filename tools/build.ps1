@@ -16,6 +16,10 @@ $jarx  = Join-Path $jdk 'bin\jar.exe'
 if (-not (Test-Path $javac)) { throw "no javac at $javac (set RUNESMITH_JDK)" }
 if (-not (Test-Path $libs))  { throw "no libs folder at $libs (set RUNESMITH_LIBS)" }
 
+# NeoForge's patched Minecraft classes (neoforge-*-client.jar) must come before the vanilla client jar:
+# libs\* lists jars in no fixed order, and the vanilla ItemStack/AnvilMenu lack NeoForge's methods.
+$patched = (Get-ChildItem $libs -Filter 'neoforge-*-client.jar' | Select-Object -First 1 | ForEach-Object { $_.FullName + ';' })
+
 $build = Join-Path $repo 'build'; $stubs = Join-Path $build 'stubs'; $classes = Join-Path $build 'classes'
 if (Test-Path $build) { Remove-Item $build -Recurse -Force }
 New-Item -ItemType Directory $stubs, $classes | Out-Null
@@ -32,7 +36,7 @@ Write-Args (Get-ChildItem (Join-Path $repo 'stubsrc') -Recurse -Filter *.java) (
 if ($LASTEXITCODE) { throw 'stubs failed' }
 
 Write-Args (Get-ChildItem (Join-Path $repo 'src') -Recurse -Filter *.java) (Join-Path $build 'src.args')
-& $javac -g -encoding UTF-8 --release 21 -proc:none -Xlint:-options -cp "$stubs;$libs\*" -d $classes "@$build\src.args"
+& $javac -g -encoding UTF-8 --release 21 -proc:none -Xlint:-options -cp "$stubs;$patched$libs\*" -d $classes "@$build\src.args"
 if ($LASTEXITCODE) { throw 'javac failed' }
 
 $toml = Get-Content (Join-Path $repo 'resources\META-INF\neoforge.mods.toml') -Raw
