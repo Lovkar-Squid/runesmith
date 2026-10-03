@@ -17,10 +17,12 @@ Made by **Lovkar & Claude** for NeoForge 1.21.1 and MineColonies.
    looks, and hire a worker.
 2. Put the armor, weapons and tools you want enchanted into the hut's racks, plus some lapis
    lazuli.
-3. The Runesmith asks the colony for enchanted books, and couriers bring them from the warehouse.
-   You can also put books into the racks yourself.
-4. When the anvil would accept a book for a piece, the Runesmith applies it. The enchanted piece
-   stays in the same rack slot until you take it.
+3. The Runesmith asks the warehouse for the enchanted books his gear can take, and couriers bring
+   them. You can also put books into the racks yourself.
+4. When the anvil would accept a book for a piece, the Runesmith applies it. Once no book in stock
+   has improved the piece for two minutes, a courier carries it to the warehouse, where colonists
+   who need a weapon, a tool or armor can ask for it. Turn **Send finished gear to the warehouse**
+   off to keep finished gear in the racks for yourself.
 
 ## Where the gear comes from
 
@@ -79,9 +81,13 @@ The Runesmith's building comes in three looks, five levels each. You pick one in
 | Lapis lazuli per book level | on | Each book also costs lapis lazuli, one per level. |
 | Visit colonists | on | The Runesmith also enchants what colonists wear and hold, guards first. |
 | Borrow from the warehouse | off | The Runesmith also borrows gear from the warehouse racks, one piece at a time, and puts it back enchanted. |
+| Send finished gear to the warehouse | on | Gear he has enchanted in his racks, which no book in stock has improved for two minutes, goes to the warehouse for the colonists. |
 
 Keep the books you want to save in your own chests, not in the warehouse: the Runesmith may use
-any enchanted book the colony has.
+any enchanted book the colony has. He only ever asks for books his gear can take, one enchantment
+each, as the Enchanter makes them, so empty or useless books stay where they are.
+
+When there is nothing to do, he potters about his hut: to the anvil, to a rack, to the door.
 
 ## License
 

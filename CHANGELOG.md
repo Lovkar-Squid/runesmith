@@ -15,18 +15,24 @@
     left alone when the enchantment would make it too good for the worker's hut, so he never puts
     it down;
   - the warehouse (off by default): one piece at a time, borrowed and put back where it was.
-- **Books** come from the colony: the hut asks the warehouse for enchanted books, and couriers bring
-  them.
+- **Books** come from the colony: the hut asks the warehouse for the books its gear can take (one
+  enchantment each, as the Enchanter makes them), and couriers bring them. Empty or useless books are
+  never asked for.
+- **Finished gear goes to the warehouse** (setting, on by default): a piece the Runesmith has
+  enchanted in his racks, which no book in stock has improved for two minutes, is carried to the
+  warehouse by a courier, where colonists can ask for it.
 - **Settings in the hut**:
   - armor, weapons, tools;
   - book level limited by the building's level;
   - only unenchanted gear;
   - lapis;
   - colonists;
-  - warehouse.
+  - warehouse;
+  - send finished gear to the warehouse.
 - **The building in three looks**: Forge Hall, Rune Tower and Crystal Heart, five levels each, as
   alternatives in the bundled *Runesmith* structure pack. Every level of a look keeps one footprint.
 - **The hut block**: a small anvil with an enchanted book on a plinth of glowing runes, with an
   amethyst cluster. Drawn from vanilla textures.
+- **Idle**: with nothing to do, the Runesmith potters about his hut instead of standing still.
 - **Logging**: every action is one `[Runesmith]` line in the log. A pair of gear and book that cannot
   go together is logged once, and again only when a setting or the building's level changes.

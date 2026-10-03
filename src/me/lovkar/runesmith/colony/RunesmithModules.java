@@ -30,7 +30,9 @@ public final class RunesmithModules {
                             .with(RunesmithSettings.LAPIS, new BoolSetting(true))
                             .with(RunesmithSettings.COLONISTS, new BoolSetting(true))
                             // off by default: the warehouse holds what the player is keeping
-                            .with(RunesmithSettings.WAREHOUSE, new BoolSetting(false)),
+                            .with(RunesmithSettings.WAREHOUSE, new BoolSetting(false))
+                            // on by default: finished gear is of use to the colony only in the warehouse
+                            .with(RunesmithSettings.SEND_FINISHED, new BoolSetting(true)),
                     () -> SettingsModuleView::new);
 
     private RunesmithModules() {

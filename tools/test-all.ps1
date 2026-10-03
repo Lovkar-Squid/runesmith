@@ -14,7 +14,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
-$all = @('boot', 'rules', 'anvil', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'n', 'j1', 'j2', 'j3', 'j4', 'j5', 'h', 'i', 'i:reload', 'l', 'w', 'k', 'p')
+$all = @('boot', 'rules', 'anvil', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'n', 'j1', 'j2', 'j3', 'j4', 'j5', 'h', 'i', 'i:reload', 'l', 'w', 'k', 'p', 'q', 'r', 's', 'u', 'v')
 # powershell -File passes "-Only a,b" as one string: split it here
 $scenarios = if ($Only) { @($Only | ForEach-Object { $_ -split ',' } | Where-Object { $_ }) } else { $all }
 

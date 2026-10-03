@@ -26,6 +26,8 @@ public final class RunesmithSettings {
     public static final ISettingKey<BoolSetting> COLONISTS = key("colonists");
     /** The Runesmith also borrows gear from the colony's warehouses, one piece at a time (default off). */
     public static final ISettingKey<BoolSetting> WAREHOUSE = key("warehouse");
+    /** Gear the Runesmith has enchanted, and no book in stock improves any further, goes to the warehouse (default on). */
+    public static final ISettingKey<BoolSetting> SEND_FINISHED = key("sendfinished");
 
     private RunesmithSettings() {
     }

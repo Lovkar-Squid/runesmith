@@ -4,6 +4,7 @@
   "block.minecolonies.blockhutrunesmith": "Runesmith",
   "com.minecolonies.building.runesmith": "Runesmith",
   "com.runesmith.building.runesmith": "Runesmith",
+  "com.runesmith.request.books": "Enchanted books the Runesmith can use",
   "com.runesmith.building.runesmith.desc": "Where the colony's enchanted books meet its gear. The Runesmith applies the Enchanter's books to armor, weapons and tools by the anvil's rules and without the XP: what you bring to the racks first, then what the colonists wear and hold, and if you allow it, gear from the warehouse. Build it as a Forge Hall, a Rune Tower or a Crystal Heart: the Runesmith structure pack has all three.",
   "com.minecolonies.job.runesmith.runesmith": "Runesmith",
   "com.minecolonies.coremod.job.runesmith": "Runesmith",
@@ -24,6 +25,8 @@
   "com.minecolonies.coremod.setting.tooltip.runesmith:lapis": "Each book also costs lapis lazuli, one per level of the book: a level I book one, a level V book five.",
   "com.minecolonies.coremod.setting.runesmith:colonists": "Visit colonists:",
   "com.minecolonies.coremod.setting.runesmith:warehouse": "Borrow from the warehouse:",
+  "com.minecolonies.coremod.setting.runesmith:sendfinished": "Send finished gear to the warehouse:",
+  "com.minecolonies.coremod.setting.tooltip.runesmith:sendfinished": "Gear the Runesmith has enchanted in his racks, and that no book in stock has improved for two minutes, is carried to the warehouse by a courier, where the colonists can ask for it. Turn this off to keep finished gear in the racks for yourself.",
   "com.minecolonies.coremod.setting.tooltip.runesmith:warehouse": "The Runesmith also takes gear from the colony's warehouses, one piece at a time, enchants it at the anvil and puts it back where it was. Off by default: the warehouse holds what you may be keeping.",
   "com.minecolonies.coremod.setting.tooltip.runesmith:colonists": "The Runesmith also walks to colonists, guards first, and enchants the armor they wear and the tool or weapon they hold. A worker's tool is left alone when the enchantment would make it too good for his hut."
 }

@@ -76,7 +76,8 @@ public class EntityAIWorkRunesmith extends AbstractEntityAIInteract<JobRunesmith
         WALK_TO_CITIZEN,
         CHANNEL,
         LOAN_FETCH,
-        LOAN_RETURN;
+        LOAN_RETURN,
+        POTTER;
 
         @Override
         public boolean isOkayToEat() {
@@ -89,9 +90,21 @@ public class EntityAIWorkRunesmith extends AbstractEntityAIInteract<JobRunesmith
     /** Idle pause when there is nothing to do, in ticks. */
     private static final int IDLE_DELAY = 60;
     private static final int BOOKS_PER_REQUEST = 4;
-    /** Enchanted books the hut may hold before it stops asking the colony for more. */
-    private static final int BOOK_STOCK_LIMIT = 8;
+    /** Enchanted books the hut may hold (useless ones included) before it stops asking the colony for more. */
+    private static final int BOOK_STOCK_LIMIT = 32;
+    /** The most kinds of book one request lists. */
+    private static final int MAX_BOOK_KINDS = 128;
+    /** A safety net under the open-request check: at most one book request, and one lapis request, a minute. */
+    private static final long REQUEST_PAUSE_TICKS = 1200;
     private static final int LAPIS_PER_REQUEST = 16;
+    /** A piece he enchanted in the racks is finished when no book in stock has improved it for this long, in ticks. */
+    private static final long FINISHED_TICKS = 2400;
+    /** A courier is asked to fetch finished gear at most this often while it waits, in ticks. */
+    private static final long PICKUP_PAUSE_TICKS = 2400;
+    /** Idle: about one idle pause in this many sends him pottering about the hut instead of standing still. */
+    private static final int POTTER_ODDS = 3;
+    /** Pottering: walk calls (one a second) before he gives the spot up. */
+    private static final int POTTER_MAX_CALLS = 30;
     private static final double XP_PER_BOOK = 2.0;
     /** A visit: calls of the walk (one every 10 ticks) before the colonist counts as out of reach. */
     private static final int MAX_VISIT_CALLS = 150;
@@ -136,7 +149,17 @@ public class EntityAIWorkRunesmith extends AbstractEntityAIInteract<JobRunesmith
     private @Nullable LoanPlan loanPlan;
     private long nextWarehouseScan;
     private boolean warehouseHasGear;
+    /** The warehouse gear seen at the last scan, for what books to ask for. */
+    private final List<ItemStack> warehouseGearSeen = new ArrayList<>();
     private int tripCalls;
+    private long nextBookRequest;
+    private long nextLapisRequest;
+    private long nextPickupRequest;
+    /** The finished pieces a courier was last asked to fetch. */
+    private final Set<String> sentFinished = new HashSet<>();
+    private net.minecraft.core.BlockPos potterTarget;
+    private int potterCalls;
+    private int potterStay;
 
     /** The warehouse slot and the piece in it, and the book chosen for it. */
     private record LoanPlan(net.minecraft.core.BlockPos warehouse, net.minecraft.core.BlockPos rack, int slot, ItemStack piece, Slot book,
@@ -152,7 +175,8 @@ public class EntityAIWorkRunesmith extends AbstractEntityAIInteract<JobRunesmith
                 new AITarget<IAIState>(State.WALK_TO_CITIZEN, this::walkToCitizen, DECIDE_RATE / 2),
                 new AITarget<IAIState>(State.CHANNEL, this::channel, WORK_RATE),
                 new AITarget<IAIState>(State.LOAN_FETCH, this::fetchLoan, DECIDE_RATE / 2),
-                new AITarget<IAIState>(State.LOAN_RETURN, this::returnLoan, DECIDE_RATE / 2));
+                new AITarget<IAIState>(State.LOAN_RETURN, this::returnLoan, DECIDE_RATE / 2),
+                new AITarget<IAIState>(State.POTTER, this::potter, DECIDE_RATE));
     }
 
     @Override
@@ -247,13 +271,32 @@ public class EntityAIWorkRunesmith extends AbstractEntityAIInteract<JobRunesmith
             }
             lapisShort = Math.max(lapisShort, shortOf[0]);
         }
-        // 4. nothing to do now: ask for what is missing
+        // 4. nothing to do now: let finished gear go, and ask for what is missing
+        final Set<String> finished = releaseFinished(gear, racks, pack, lapisShort);
         final boolean anyGear = !gear.isEmpty() || !worn.isEmpty() || warehouses && warehouseHasGear;
         if (lapisShort > 0) {
             requestLapis(lapisShort);
-        } else if (anyGear && books.size() < BOOK_STOCK_LIMIT && !Requests.pending(building, worker.getCitizenData(), Items.ENCHANTED_BOOK)) {
-            Requests.requestBooks(worker.getCitizenData(), BOOKS_PER_REQUEST);
-            Runesmith.LOGGER.info("[Runesmith] requested {} enchanted book(s) hut={}", BOOKS_PER_REQUEST, building.getPosition().toShortString());
+        } else if (anyGear && books.size() < BOOK_STOCK_LIMIT && world.getGameTime() >= nextBookRequest
+                && !Requests.pending(building, worker.getCitizenData(), Items.ENCHANTED_BOOK)) {
+            // only books that would improve something: a useless one in the racks cannot answer the request
+            final List<ItemStack> pieces = new ArrayList<>();
+            for (final Slot g : gear) {
+                final ItemStack piece = stack(g, racks, pack);
+                if (!finished.contains(BuildingRunesmith.fingerprint(piece))) {
+                    pieces.add(piece); // no books for gear on its way to the warehouse
+                }
+            }
+            worn.forEach(w -> pieces.add(w.piece()));
+            if (warehouses) {
+                pieces.addAll(warehouseGearSeen);
+            }
+            final List<ItemStack> wanted = Requests.usefulBooks(world.registryAccess(), pieces, policy, MAX_BOOK_KINDS);
+            nextBookRequest = world.getGameTime() + REQUEST_PAUSE_TICKS;
+            if (!wanted.isEmpty()) {
+                Requests.requestBooks(worker.getCitizenData(), wanted, BOOKS_PER_REQUEST);
+                Runesmith.LOGGER.info("[Runesmith] requested {} enchanted book(s), any of {} kinds the gear can take hut={}", BOOKS_PER_REQUEST,
+                        wanted.size(), building.getPosition().toShortString());
+            }
         }
         return idle();
     }
@@ -277,18 +320,92 @@ public class EntityAIWorkRunesmith extends AbstractEntityAIInteract<JobRunesmith
         return out;
     }
 
+    /**
+     * Finished rack gear goes to the warehouse (setting, default on): a piece the Runesmith enchanted
+     * here that no book in stock improves (there is no pair to work on, or this is not called) and
+     * that has waited {@link #FINISHED_TICKS} since its last book, so books on their way still find
+     * it. The building lets a courier take it, and a courier is asked for. Returns the finished pieces.
+     */
+    private Set<String> releaseFinished(final List<Slot> gear, final IItemHandler racks, final IItemHandler pack, final int lapisShort) {
+        final Set<String> finished = new HashSet<>();
+        if (building.sendFinished() && lapisShort == 0) {
+            final long now = world.getGameTime();
+            for (final Slot g : gear) {
+                final ItemStack piece = stack(g, racks, pack);
+                final Long at = building.enchantedAt(piece);
+                if (at != null && now - at >= FINISHED_TICKS) {
+                    finished.add(BuildingRunesmith.fingerprint(piece));
+                }
+            }
+        }
+        building.setReleasable(finished);
+        final boolean news = !sentFinished.containsAll(finished);
+        if (!finished.isEmpty() && (news || world.getGameTime() >= nextPickupRequest)) {
+            building.createPickupRequest(finished.size(), true);
+            nextPickupRequest = world.getGameTime() + PICKUP_PAUSE_TICKS;
+            if (news) {
+                Runesmith.LOGGER.info("[Runesmith] sending {} finished piece(s) to the warehouse: {} hut={}", finished.size(),
+                        String.join(", ", finished), building.getPosition().toShortString());
+            }
+        }
+        sentFinished.clear();
+        sentFinished.addAll(finished);
+        return finished;
+    }
+
     private void requestLapis(final int needed) {
-        if (Requests.pending(building, worker.getCitizenData(), Items.LAPIS_LAZULI)) {
+        if (world.getGameTime() < nextLapisRequest || Requests.pending(building, worker.getCitizenData(), Items.LAPIS_LAZULI)) {
             return;
         }
+        nextLapisRequest = world.getGameTime() + REQUEST_PAUSE_TICKS;
         checkIfRequestForItemExistOrCreateAsync(new ItemStack(Items.LAPIS_LAZULI), Math.max(LAPIS_PER_REQUEST, needed), needed);
         Runesmith.LOGGER.info("[Runesmith] requested {} lapis lazuli hut={}", Math.max(LAPIS_PER_REQUEST, needed),
                 building.getPosition().toShortString());
     }
 
+    /** Nothing to do: wait a little, and now and then potter about the hut rather than stand still. */
     private IAIState idle() {
+        if (world.random.nextInt(POTTER_ODDS) == 0) {
+            potterTarget = potterSpot();
+            potterCalls = 0;
+            potterStay = 2 + world.random.nextInt(4);
+            return State.POTTER;
+        }
         setDelay(IDLE_DELAY);
         return AIWorkerState.IDLE;
+    }
+
+    /** The anvil, one of the racks or the hut block, picked at random (the hut block is always there). */
+    private net.minecraft.core.BlockPos potterSpot() {
+        final List<net.minecraft.core.BlockPos> spots = new ArrayList<>(building.getLocationsFromTag(BuildingRunesmith.TAG_WORK));
+        for (final net.minecraft.core.BlockPos c : building.getContainers()) {
+            if (!c.equals(building.getPosition())) {
+                spots.add(c);
+            }
+        }
+        spots.add(building.getPosition());
+        return spots.get(world.random.nextInt(spots.size()));
+    }
+
+    /** Walks to the chosen spot and stays a few seconds; at the anvil he gives it a tap or two. */
+    private IAIState potter() {
+        final net.minecraft.core.BlockPos target = potterTarget;
+        if (target == null || ++potterCalls > POTTER_MAX_CALLS) {
+            potterTarget = null;
+            return AIWorkerState.START_WORKING;
+        }
+        if (!walkToSafePos(target)) {
+            return getState();
+        }
+        worker.getLookControl().setLookAt(target.getX() + 0.5, target.getY() + 0.5, target.getZ() + 0.5);
+        if (potterStay-- > 0) {
+            if (building.getLocationsFromTag(BuildingRunesmith.TAG_WORK).contains(target) && world.random.nextBoolean()) {
+                worker.swing(InteractionHand.MAIN_HAND);
+            }
+            return getState();
+        }
+        potterTarget = null;
+        return AIWorkerState.START_WORKING;
     }
 
     // ---------------------------------------------------------------- the racks
@@ -377,6 +494,7 @@ public class EntityAIWorkRunesmith extends AbstractEntityAIInteract<JobRunesmith
     private boolean planLoan(final List<Slot> books, final IItemHandler racks, final IItemHandler pack, final RunesmithPolicy policy,
             final int lapisHeld, final int[] lapisShort) {
         warehouseHasGear = false;
+        warehouseGearSeen.clear();
         for (final IWareHouse warehouse : warehousesNearestFirst()) {
             for (final net.minecraft.core.BlockPos rackPos : warehouse.getContainers()) {
                 final IItemHandler h = rackInventory(rackPos);
@@ -389,6 +507,9 @@ public class EntityAIWorkRunesmith extends AbstractEntityAIInteract<JobRunesmith
                         continue;
                     }
                     warehouseHasGear = true;
+                    if (warehouseGearSeen.size() < 64) {
+                        warehouseGearSeen.add(piece.copy());
+                    }
                     for (final Slot b : books) {
                         final ItemStack bookStack = stack(b, racks, pack);
                         final EnchantApplier.Result result = EnchantApplier.apply(piece, bookStack, policy);
@@ -731,6 +852,9 @@ public class EntityAIWorkRunesmith extends AbstractEntityAIInteract<JobRunesmith
     }
 
     private void done(final Taken taken, final ItemStack before, final ItemStack after, final String where) {
+        if ("rack".equals(where)) {
+            building.markEnchanted(after, world.getGameTime());
+        }
         world.playSound(null, worker.blockPosition(), SoundEvents.ANVIL_USE, SoundSource.NEUTRAL, 0.5F, 1.2F);
         Runesmith.LOGGER.info("[Runesmith] applied {} via {}{} to {} -> {} ({}) hut={} worker={}",
                 EnchantApplier.describe(EnchantmentHelper.getEnchantmentsForCrafting(taken.book)), describe(taken.book),

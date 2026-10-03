@@ -139,6 +139,11 @@ public final class RunesmithTest {
             case "w" -> scenarioW();
             case "k" -> scenarioK();
             case "p" -> scenarioP();
+            case "q" -> scenarioQ();
+            case "r" -> scenarioR();
+            case "s" -> scenarioS();
+            case "u" -> scenarioU();
+            case "v" -> scenarioV();
             default -> steps.add(new Step("unknown scenario '" + scenario + "'", 1, l -> {
                 check("scenario known", false, scenario);
                 return true;
@@ -386,7 +391,7 @@ public final class RunesmithTest {
             check("C no mod lines", ColonyScenarios.modLines("applied ").isEmpty() && ColonyScenarios.modLines("skipped ").isEmpty()
                     && ColonyScenarios.modLines("requested ").isEmpty(), "");
             check("C book kept", books() == 1, "books " + books());
-            check("C worker idle", String.valueOf(aiState(smith)).matches("IDLE|START_WORKING"), "AI " + aiState(smith));
+            check("C worker idle", String.valueOf(aiState(smith)).matches("IDLE|START_WORKING|POTTER"), "AI " + aiState(smith));
             invariant("C");
             return true;
         }));
@@ -403,8 +408,212 @@ public final class RunesmithTest {
             check("D one request line", requested.size() == 1 && requested.get(0).contains("enchanted book"), String.join(" | ", requested));
             check("D request for enchanted books open", ColonyScenarios.booksRequested(smithHut, smith), "");
             check("D nothing applied", ColonyScenarios.modLines("applied ").isEmpty(), "");
-            check("D worker idle", String.valueOf(aiState(smith)).matches("IDLE|START_WORKING"), "AI " + aiState(smith));
+            check("D worker idle", String.valueOf(aiState(smith)).matches("IDLE|START_WORKING|POTTER"), "AI " + aiState(smith));
             invariant("D");
+            return true;
+        }));
+    }
+
+    /**
+     * Q: a useless and an empty enchanted book in the racks, a sword, no warehouse. One request, and it
+     * lists only books the sword can take. (A request for "any enchanted book" was answered on the spot
+     * from the hut's own racks by the useless books, closed, and asked again every few seconds.)
+     */
+    private void scenarioQ() {
+        runesmithColony(false);
+        stockAndSnapshot("iron sword, a Respiration I book, an empty enchanted book, 16 lapis", l -> new ItemStack[] {
+                new ItemStack(Items.IRON_SWORD), ColonyScenarios.book(l, Enchantments.RESPIRATION, 1), new ItemStack(Items.ENCHANTED_BOOK),
+                new ItemStack(Items.LAPIS_LAZULI, 16)});
+        settle(2400);
+        steps.add(new Step("checks", 20, l -> {
+            final List<String> requested = ColonyScenarios.modLines("requested ");
+            check("Q one request line", requested.size() == 1 && requested.get(0).contains("enchanted book"), String.join(" | ", requested));
+            final List<ItemStack> listed = new ArrayList<>();
+            for (final var r : smithHut.getOpenRequestsOfTypeFiltered(smith, com.minecolonies.api.util.constant.TypeConstants.DELIVERABLE,
+                    r -> r.getRequest() instanceof com.minecolonies.api.colony.requestsystem.requestable.StackList)) {
+                listed.addAll(((com.minecolonies.api.colony.requestsystem.requestable.StackList) r.getRequest()).getStacks());
+            }
+            final long sharp = listed.stream().filter(b -> maxLevel(b) > 0 && describeBook(b).contains("sharpness")).count();
+            final long resp = listed.stream().filter(b -> describeBook(b).contains("respiration")).count();
+            final long empty = listed.stream().filter(b -> maxLevel(b) == 0).count();
+            check("Q the open request lists only books the sword can take", !listed.isEmpty() && sharp > 0 && resp == 0 && empty == 0,
+                    listed.size() + " books listed, " + sharp + " Sharpness, " + resp + " Respiration, " + empty + " empty");
+            check("Q the useless books stay", books() == 2, "books " + books());
+            check("Q nothing applied", ColonyScenarios.modLines("applied ").isEmpty(), "");
+            invariant("Q");
+            return true;
+        }));
+    }
+
+    /**
+     * R: finished gear goes to the warehouse (setting on by default). The Runesmith enchants a sword in
+     * his racks; when no book has improved it for two minutes a courier carries it to the warehouse,
+     * where the colonists can ask for it.
+     */
+    private void scenarioR() {
+        runesmithColony(false);
+        steps.add(new Step("paste a warehouse and a courier's hut", 20, l -> paste(l, "Medieval Oak", "craftsmanship/storage/warehouse1.blueprint", warehousePos())
+                && paste(l, "Medieval Oak", "craftsmanship/storage/deliveryman1.blueprint", courierPos())));
+        steps.add(new Step("both pasted", 8000, l -> pasted(l, warehousePos()) && pasted(l, courierPos())));
+        steps.add(new Step("register both", 200, l -> (warehouse = register(l, warehousePos(), "warehouse")) != null
+                && (courierHut = register(l, courierPos(), "courier hut")) != null));
+        steps.add(new Step("hire a courier", 200, l -> {
+            courier = hire(l, courierHut);
+            final com.minecolonies.core.colony.buildings.modules.CourierAssignmentModule couriers =
+                    warehouse.getFirstModuleOccurance(com.minecolonies.core.colony.buildings.modules.CourierAssignmentModule.class);
+            final boolean assigned = couriers != null && (couriers.hasAssignedCitizen(courier) || couriers.assignCitizen(courier));
+            check("courier works for the warehouse", assigned, courier.getName());
+            return jobIs(courier, "JobDeliveryman");
+        }));
+        stockAndSnapshot("iron sword, Sharpness I book, 16 lapis in the Runesmith", l -> new ItemStack[] {
+                new ItemStack(Items.IRON_SWORD), ColonyScenarios.book(l, Enchantments.SHARPNESS, 1), new ItemStack(Items.LAPIS_LAZULI, 16)});
+        waitFor("the sword is enchanted in the racks", 6000, l -> ColonyScenarios.all(smithHut, smith, Items.IRON_SWORD).stream()
+                .anyMatch(st -> ColonyScenarios.level(l, st, Enchantments.SHARPNESS) == 1));
+        steps.add(new Step("a courier takes the finished sword to the warehouse", 12000, l -> {
+            if (tick % 600 == 0) {
+                LOG.info(TAG + "waiting: swords hut {}, courier {}, warehouse {}; courier {} AI {}",
+                        ColonyScenarios.count(smithHut, smith, st -> st.is(Items.IRON_SWORD)),
+                        ColonyScenarios.count(courierHut, courier, st -> st.is(Items.IRON_SWORD)),
+                        ColonyScenarios.count(warehouse, null, st -> st.is(Items.IRON_SWORD)), who(courier), aiState(courier));
+            }
+            return tick % 20 == 0 && ColonyScenarios.count(warehouse, null,
+                    st -> st.is(Items.IRON_SWORD) && ColonyScenarios.level(l, st, Enchantments.SHARPNESS) == 1) > 0;
+        }));
+        settle(100);
+        steps.add(new Step("checks", 20, l -> {
+            final int hut = ColonyScenarios.count(smithHut, smith, st -> st.is(Items.IRON_SWORD));
+            final int carried = ColonyScenarios.count(courierHut, courier, st -> st.is(Items.IRON_SWORD));
+            final int stored = ColonyScenarios.count(warehouse, null, st -> st.is(Items.IRON_SWORD));
+            check("R the enchanted sword is in the warehouse, not in the hut", stored == 1 && hut == 0 && carried == 0,
+                    "hut " + hut + ", courier " + carried + ", warehouse " + stored);
+            final List<String> sent = ColonyScenarios.modLines("sending ");
+            check("R one sending line", sent.size() == 1 && sent.get(0).contains("iron_sword"), String.join(" | ", sent));
+            check("R one applied line", ColonyScenarios.modLines("applied ").size() == 1, "");
+            check("R book and lapis spent once", books() == 0 && lapis() == 15, "books " + books() + ", lapis " + lapis());
+            return true;
+        }));
+    }
+
+    /** A warehouse with a courier working for it, as E and R use it. */
+    private void warehouseWithCourier() {
+        steps.add(new Step("paste a warehouse and a courier's hut", 20, l -> paste(l, "Medieval Oak", "craftsmanship/storage/warehouse1.blueprint", warehousePos())
+                && paste(l, "Medieval Oak", "craftsmanship/storage/deliveryman1.blueprint", courierPos())));
+        steps.add(new Step("both pasted", 8000, l -> pasted(l, warehousePos()) && pasted(l, courierPos())));
+        steps.add(new Step("register both", 200, l -> (warehouse = register(l, warehousePos(), "warehouse")) != null
+                && (courierHut = register(l, courierPos(), "courier hut")) != null));
+        steps.add(new Step("hire a courier", 200, l -> {
+            courier = hire(l, courierHut);
+            final com.minecolonies.core.colony.buildings.modules.CourierAssignmentModule couriers =
+                    warehouse.getFirstModuleOccurance(com.minecolonies.core.colony.buildings.modules.CourierAssignmentModule.class);
+            final boolean assigned = couriers != null && (couriers.hasAssignedCitizen(courier) || couriers.assignCitizen(courier));
+            check("courier works for the warehouse", assigned, courier.getName());
+            return jobIs(courier, "JobDeliveryman");
+        }));
+    }
+
+    /** S: the setting off: the finished sword stays in the racks, no courier is sent for it. */
+    private void scenarioS() {
+        runesmithColony(false);
+        steps.add(new Step("send finished gear off", 20, l -> {
+            ColonyScenarios.set(smithHut, RunesmithSettings.SEND_FINISHED, false);
+            return true;
+        }));
+        warehouseWithCourier();
+        stockAndSnapshot("iron sword, Sharpness I book, 16 lapis in the Runesmith", l -> new ItemStack[] {
+                new ItemStack(Items.IRON_SWORD), ColonyScenarios.book(l, Enchantments.SHARPNESS, 1), new ItemStack(Items.LAPIS_LAZULI, 16)});
+        waitFor("the sword is enchanted in the racks", 6000, l -> ColonyScenarios.all(smithHut, smith, Items.IRON_SWORD).stream()
+                .anyMatch(st -> ColonyScenarios.level(l, st, Enchantments.SHARPNESS) == 1));
+        settle(4800);
+        steps.add(new Step("checks", 20, l -> {
+            final int hut = ColonyScenarios.count(smithHut, smith, st -> st.is(Items.IRON_SWORD));
+            final int stored = ColonyScenarios.count(warehouse, null, st -> st.is(Items.IRON_SWORD));
+            check("S the sword stays in the hut", hut == 1 && stored == 0, "hut " + hut + ", warehouse " + stored);
+            check("S no sending line", ColonyScenarios.modLines("sending ").isEmpty(), String.join(" | ", ColonyScenarios.modLines("sending ")));
+            invariant("S");
+            return true;
+        }));
+    }
+
+    private ICitizenData guardWithoutSword;
+
+    /**
+     * U: the whole way to a colonist. The Runesmith enchants a stone sword, it goes to the warehouse
+     * as finished gear, and a newly hired guard with no weapon asks for a sword: a courier brings him
+     * the enchanted one, and he holds it. (A stone sword with Sharpness I is what a level 1 guard
+     * tower allows.)
+     */
+    private void scenarioU() {
+        runesmithColony(false);
+        warehouseWithCourier();
+        stockAndSnapshot("stone sword, Sharpness I book, 16 lapis in the Runesmith", l -> new ItemStack[] {
+                new ItemStack(Items.STONE_SWORD), ColonyScenarios.book(l, Enchantments.SHARPNESS, 1), new ItemStack(Items.LAPIS_LAZULI, 16)});
+        waitFor("the sword is enchanted in the racks", 6000, l -> ColonyScenarios.all(smithHut, smith, Items.STONE_SWORD).stream()
+                .anyMatch(st -> ColonyScenarios.level(l, st, Enchantments.SHARPNESS) == 1));
+        waitFor("the finished sword reaches the warehouse", 12000, l -> ColonyScenarios.count(warehouse, null,
+                st -> st.is(Items.STONE_SWORD) && ColonyScenarios.level(l, st, Enchantments.SHARPNESS) == 1) > 0);
+        steps.add(new Step("paste a guard tower", 20, l -> paste(l, "Medieval Oak", "military/guardtower1.blueprint", otherPos())));
+        steps.add(new Step("guard tower pasted", 6000, l -> pasted(l, otherPos())));
+        steps.add(new Step("register the guard tower", 200, l -> (otherHut = register(l, otherPos(), "guard tower")) != null));
+        steps.add(new Step("hire a guard with no weapon", 200, l -> {
+            guardWithoutSword = hire(l, otherHut);
+            check("hired a guard", guardWithoutSword.getJob() instanceof com.minecolonies.core.colony.jobs.AbstractJobGuard<?>,
+                    guardWithoutSword.getName() + " -> " + (guardWithoutSword.getJob() == null ? "none" : guardWithoutSword.getJob().getClass().getSimpleName()));
+            return true;
+        }));
+        steps.add(new Step("the guard gets the enchanted sword", 15000, l -> {
+            if (tick % 600 == 0) {
+                LOG.info(TAG + "waiting: guard {} AI {}, holds {}; swords warehouse {}, tower {}, courier {}", who(guardWithoutSword),
+                        aiState(guardWithoutSword), guardWithoutSword.getInventory().getHeldItem(net.minecraft.world.InteractionHand.MAIN_HAND),
+                        ColonyScenarios.count(warehouse, null, st -> st.is(Items.STONE_SWORD)),
+                        ColonyScenarios.count(otherHut, null, st -> st.is(Items.STONE_SWORD)),
+                        ColonyScenarios.count(courierHut, courier, st -> st.is(Items.STONE_SWORD)));
+            }
+            return tick % 20 == 0 && InventoryUtils.getItemCountInItemHandler(guardWithoutSword.getInventory(),
+                    st -> st.is(Items.STONE_SWORD) && ColonyScenarios.level(l, st, Enchantments.SHARPNESS) == 1) > 0;
+        }));
+        settle(600);
+        steps.add(new Step("checks", 20, l -> {
+            final ItemStack held = guardWithoutSword.getInventory().getHeldItem(net.minecraft.world.InteractionHand.MAIN_HAND);
+            final int inPack = InventoryUtils.getItemCountInItemHandler(guardWithoutSword.getInventory(),
+                    st -> st.is(Items.STONE_SWORD) && ColonyScenarios.level(l, st, Enchantments.SHARPNESS) == 1);
+            check("U the guard has the enchanted sword", inPack == 1, who(guardWithoutSword) + ", holds " + held);
+            check("U it left the warehouse", ColonyScenarios.count(warehouse, null, st -> st.is(Items.STONE_SWORD)) == 0, "");
+            check("U one applied, one sending line", ColonyScenarios.modLines("applied ").size() == 1
+                    && ColonyScenarios.modLines("sending ").size() == 1, "");
+            return true;
+        }));
+    }
+
+    /** V: nothing to do: the Runesmith potters about his hut instead of standing still. */
+    private void scenarioV() {
+        runesmithColony(false);
+        final double[] start = new double[3];
+        final double[] farthest = {0};
+        final boolean[] started = {false};
+        final java.util.Set<String> states = new java.util.HashSet<>();
+        steps.add(new Step("the Runesmith idles for a while", 3000, l -> {
+            final Optional<AbstractEntityCitizen> e = smith.getEntity();
+            if (e.isEmpty()) {
+                return false;
+            }
+            // measure from where he first stands idle at his hut, not from the walk there
+            if (!started[0] && String.valueOf(aiState(smith)).matches("IDLE|POTTER")) {
+                started[0] = true;
+                start[0] = e.get().getX();
+                start[1] = e.get().getY();
+                start[2] = e.get().getZ();
+            }
+            if (started[0] && tick % 10 == 0) {
+                states.add(aiState(smith));
+                farthest[0] = Math.max(farthest[0], Math.hypot(e.get().getX() - start[0], e.get().getZ() - start[2]));
+            }
+            return tick - stepStart >= 2400;
+        }));
+        steps.add(new Step("checks", 20, l -> {
+            check("V he potters", states.contains("POTTER"), "AI states seen " + states);
+            check("V he moves about", farthest[0] >= 1.5, String.format("farthest %.1f blocks from where he stood", farthest[0]));
+            check("V nothing requested, nothing applied", ColonyScenarios.modLines("requested ").isEmpty()
+                    && ColonyScenarios.modLines("applied ").isEmpty(), "");
             return true;
         }));
     }
