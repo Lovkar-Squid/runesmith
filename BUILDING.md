@@ -49,6 +49,9 @@ The version lives only in `resources/META-INF/neoforge.mods.toml`.
 
 `tools/gen/isorender.py` draws a flat isometric preview into `tools/out/`.
 
+`python tools/gen/gen_hut_model.py` writes the hut block's model
+(`resources/assets/runesmith/models/block/blockhutrunesmith.json`) from vanilla textures only.
+
 ## Headless tests
 
 The test harness (`tools/harness/`, mod id `runesmithtest`) runs one scenario on a dedicated
