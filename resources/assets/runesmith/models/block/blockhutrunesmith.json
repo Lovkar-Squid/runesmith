@@ -1,0 +1,9 @@
+{
+  "parent": "minecraft:block/cube_bottom_top",
+  "textures": {
+    "top": "minecraft:block/anvil_top",
+    "bottom": "minecraft:block/polished_blackstone",
+    "side": "minecraft:block/polished_blackstone_bricks",
+    "particle": "minecraft:block/polished_blackstone_bricks"
+  }
+}

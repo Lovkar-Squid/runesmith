@@ -1,0 +1,8 @@
+{
+  "variants": {
+    "facing=north": { "model": "runesmith:block/blockhutrunesmith", "y": 0 },
+    "facing=east": { "model": "runesmith:block/blockhutrunesmith", "y": 90 },
+    "facing=south": { "model": "runesmith:block/blockhutrunesmith", "y": 180 },
+    "facing=west": { "model": "runesmith:block/blockhutrunesmith", "y": 270 }
+  }
+}

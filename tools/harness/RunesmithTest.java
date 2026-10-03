@@ -113,6 +113,8 @@ public final class RunesmithTest {
         switch (scenario) {
             case "boot" -> boot();
             case "drain" -> drain();
+            case "anvil" -> anvil();
+            case "rules" -> rules();
             default -> steps.add(new Step("unknown scenario '" + scenario + "'", 1, l -> {
                 check("scenario known", false, scenario);
                 return true;
@@ -223,6 +225,25 @@ public final class RunesmithTest {
                     manaBefore, mana, swordsEnchanted, picksEnchanted, countBuilding(enchanter, s -> s.is(Items.BOOK)),
                     countWorker(enchanterWorker, s -> s.is(Items.BOOK)));
             check("drain visit observed", mana > manaBefore, "Mana " + manaBefore + " -> " + mana);
+            return true;
+        }));
+    }
+
+    /** Phase 1: the vanilla anvil judges EnchantApplier on every gear item and every single-enchantment book. */
+    private void anvil() {
+        steps.add(new Step("anvil oracle", 100, l -> {
+            final AnvilOracle.Summary s = new AnvilOracle(l, msg -> LOG.info(TAG + msg)).run();
+            LOG.info(TAG + "anvil cases={} match={} divergent={} skipped={} deliberate={}",
+                    s.cases(), s.match(), s.divergent(), s.skipped(), s.deliberate());
+            check("anvil oracle", s.divergent() == 0 && s.cases() >= 5000, "cases " + s.cases() + ", divergent " + s.divergent());
+            return true;
+        }));
+    }
+
+    /** Phase 1: the rules that differ from the anvil on purpose, case by case. */
+    private void rules() {
+        steps.add(new Step("rules cases", 100, l -> {
+            new RulesCheck(l, this::check).run();
             return true;
         }));
     }

@@ -14,3 +14,10 @@ type="required"
 versionRange="*"
 ordering="AFTER"
 side="SERVER"
+
+[[dependencies.runesmithtest]]
+modId="runesmith"
+type="required"
+versionRange="*"
+ordering="AFTER"
+side="SERVER"
