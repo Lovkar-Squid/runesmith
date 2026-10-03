@@ -64,8 +64,8 @@ import java.util.function.Predicate;
  * again: the book (and the lapis) are taken first, the enchanted piece goes where the old one was
  * through the container's own setter, and it is read back before the line is logged. If anything
  * moved while the worker was busy, or the colonist walked away, nothing is taken and the work is
- * chosen anew. A pair the rules reject in the racks is reported once, and again only after the
- * hut's or the pack's contents change.</p>
+ * chosen anew. A pair the rules reject in the racks is reported once, and again only after a
+ * setting or the building's level changes.</p>
  */
 public class EntityAIWorkRunesmith extends AbstractEntityAIInteract<JobRunesmith, BuildingRunesmith> {
 
@@ -126,8 +126,10 @@ public class EntityAIWorkRunesmith extends AbstractEntityAIInteract<JobRunesmith
     private int visitCitizen = -1;
     private Citizens.Place visitPlace = Citizens.Place.HAND;
     private int visitCalls;
+    /** Rejected pairs already logged under {@link #reportedFor}; capped so a huge stock cannot grow it without end. */
     private final Set<String> reported = new HashSet<>();
-    private int reportedFor;
+    private @Nullable RunesmithPolicy reportedFor;
+    private static final int REPORTED_MAX = 4096;
     /** citizen id and place -> {day of the last visit, hash of the piece then, game time to retry after (0 = it got through)}. */
     private final Map<String, long[]> visited = new HashMap<>();
     /** A warehouse piece chosen but not yet taken. */
@@ -170,7 +172,8 @@ public class EntityAIWorkRunesmith extends AbstractEntityAIInteract<JobRunesmith
             return idle();
         }
         final IItemHandler pack = worker.getInventoryCitizen();
-        forgetReportsIfChanged(racks, pack);
+        final RunesmithPolicy policy = building.policy();
+        forgetReportsIfPolicyChanged(policy);
         // 0. a warehouse piece on loan goes back before anything new is started
         if (!job.loans().isEmpty()) {
             tripCalls = 0;
@@ -185,7 +188,6 @@ public class EntityAIWorkRunesmith extends AbstractEntityAIInteract<JobRunesmith
         }
         final List<Slot> books = find(racks, pack, BuildingRunesmith::isBook);
         final int lapisHeld = count(racks, pack, BuildingRunesmith::isLapis);
-        final RunesmithPolicy policy = building.policy();
         int lapisShort = 0;
 
         // 1. the racks: what somebody brought to the hut comes first
@@ -834,30 +836,26 @@ public class EntityAIWorkRunesmith extends AbstractEntityAIInteract<JobRunesmith
 
     // ---------------------------------------------------------------- reporting
 
-    /** A rejected pair is logged once, and again only after the hut's or the pack's contents change. */
+    /**
+     * A rejected pair is logged once. The reason depends only on the piece, the book and the policy,
+     * so the same pair is not logged again until a setting or the building's level changes. (Forgetting
+     * on every change of the racks' contents logged the whole stock again after each applied book:
+     * 25,093 lines in the first fuzz run.)
+     */
     private void report(final ItemStack gear, final ItemStack book, final EnchantApplier.Reason reason) {
         final String key = BuiltInRegistries.ITEM.getKey(gear.getItem()) + "#" + gear.getComponents().hashCode() + "|"
                 + book.getComponents().hashCode() + "|" + reason;
+        if (reported.size() >= REPORTED_MAX) {
+            reported.clear();
+        }
         if (reported.add(key)) {
             Runesmith.LOGGER.info("[Runesmith] skipped {} + {}: {}", describe(gear), describe(book), reason);
         }
     }
 
-    private void forgetReportsIfChanged(final IItemHandler racks, final IItemHandler pack) {
-        int h = 1;
-        for (final IItemHandler handler : List.of(racks, pack)) {
-            for (int i = 0; i < handler.getSlots(); i++) {
-                final ItemStack s = handler.getStackInSlot(i);
-                if (!s.isEmpty()) {
-                    h = 31 * h + i;
-                    h = 31 * h + s.getItem().hashCode();
-                    h = 31 * h + s.getCount();
-                    h = 31 * h + s.getComponents().hashCode();
-                }
-            }
-        }
-        if (h != reportedFor) {
-            reportedFor = h;
+    private void forgetReportsIfPolicyChanged(final RunesmithPolicy policy) {
+        if (!policy.equals(reportedFor)) {
+            reportedFor = policy;
             reported.clear();
         }
     }
